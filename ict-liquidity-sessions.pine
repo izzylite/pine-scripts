@@ -250,7 +250,7 @@ bear_ob_css         = input.color(color.new(#b22833, 80), "Bearish OB", group = 
 var g_PO3           = "HTF Candles (PO3)"
 show_po3            = input.bool(true, "Show", inline = "PO3", group = g_PO3)
 po3_tf              = input.timeframe("1D", "", inline = "PO3", group = g_PO3)
-po3_count           = input.int(1, "Candles", 1, 3, inline = "PO3", group = g_PO3, tooltip = "Timeframe, and how many of its latest candles to show (up to 3). The rightmost one is the current candle, still forming. Only shown on charts below this timeframe.")
+po3_count           = input.int(1, "Candles", 1, 4, inline = "PO3", group = g_PO3, tooltip = "Timeframe, and how many of its latest candles to show (up to 4). The rightmost one is the current candle, still forming. Only shown on charts below this timeframe.")
 po3_offset          = input.int(10, "Distance from current candle", 0, 300, group = g_PO3, tooltip = "In bars")
 po3_size            = input.string('Medium', "Size", options = ['Small', 'Medium', 'Large'], group = g_PO3)
 po3_body_up         = input.color(#4caf50, "Body", inline = "PO3B", group = g_PO3)
@@ -1164,7 +1164,7 @@ if show_ob
 
 
 // ---- HTF Candles (PO3) ----
-// The latest 1-3 candles of a higher timeframe drawn to the right of price, with the current candle's open / high / low
+// The latest 1-4 candles of a higher timeframe drawn to the right of price, with the current candle's open / high / low
 // projected back to where they formed, its OHLC prices, and a table with the time left and the range.
 // PERF: the candles come from one small data request on the last bar only. The only per-bar work is remembering where the
 // current candle opened and made its high / low, and only on the recent bars that can belong to it.
@@ -1269,9 +1269,9 @@ po3_set_px(int k, int x, float y) =>
         lb.set_xy(na, na)
 
 if po3_ok and barstate.islast
-    // Current candle (pa_), the one before (pb_) and the one before that (pc_). On the last bar the current candle's
+    // Current candle (pa_), then 1 (pb_), 2 (pc_) and 3 (pd_) candles back. On the last bar the current candle's
     // values are its values so far, so lookahead_on holds no future data here.
-    [pa_o, pa_h, pa_l, pa_c, pa_tc, pb_o, pb_h, pb_l, pb_c, pc_o, pc_h, pc_l, pc_c] = request.security(syminfo.tickerid, po3_tf, [open, high, low, close, time_close, open[1], high[1], low[1], close[1], open[2], high[2], low[2], close[2]], lookahead = barmerge.lookahead_on, calc_bars_count = 10)
+    [pa_o, pa_h, pa_l, pa_c, pa_tc, pb_o, pb_h, pb_l, pb_c, pc_o, pc_h, pc_l, pc_c, pd_o, pd_h, pd_l, pd_c] = request.security(syminfo.tickerid, po3_tf, [open, high, low, close, time_close, open[1], high[1], low[1], close[1], open[2], high[2], low[2], close[2], open[3], high[3], low[3], close[3]], lookahead = barmerge.lookahead_on, calc_bars_count = 10)
 
     if po3_body.size() == 0
         // created at the current bar and positioned (or hidden) right below
@@ -1290,8 +1290,10 @@ if po3_ok and barstate.islast
     int step  = po3_w + 2
     int x0    = bar_index + po3_offset
     int x_cur = x0 + (po3_count - 1) * step
+    if po3_count >= 4
+        po3_set_candle(po3_count - 4, pd_o, pd_h, pd_l, pd_c, x0 + (po3_count - 4) * step)
     if po3_count >= 3
-        po3_set_candle(0, pc_o, pc_h, pc_l, pc_c, x0)
+        po3_set_candle(po3_count - 3, pc_o, pc_h, pc_l, pc_c, x0 + (po3_count - 3) * step)
     if po3_count >= 2
         po3_set_candle(po3_count - 2, pb_o, pb_h, pb_l, pb_c, x0 + (po3_count - 2) * step)
     po3_set_candle(po3_count - 1, pa_o, pa_h, pa_l, pa_c, x_cur)

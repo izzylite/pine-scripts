@@ -1,0 +1,616 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Maze1540
+
+//@version=6
+indicator("ICT HTF FVG", "HTF FVG", true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500, dynamic_requests = true, calc_bars_count = 2000)
+// HTF FVG + IFVG only, as its own indicator so it gets its own 0.5 s execution budget.
+// Speed: each timeframe's FVGs are built once, on the last bar, from its last 'HTF candles to scan' candles (one small
+// data request), instead of on every chart bar. In realtime, each new HTF candle is added when it closes.
+// calc_bars_count ("Calculated bars" in the settings) only limits the chart bars used to track sweeps for the alert
+// text, so lowering it costs no FVG history.
+// dynamic_requests (the v6 default, kept explicit): a data request only runs on the bars where its code runs.
+// Sessions, killzones, previous D/W/M/Y highs & lows, opens, dividers and order blocks live in the companion
+// "ICT Liquidity & Sessions" indicator (ict-liquidity-sessions.pine).
+
+
+// --------------------------------------- Constant Functions --------------------------------------------------
+get_line_type(_style) =>
+    result = switch _style
+        'Solid' => line.style_solid
+        'Dotted' => line.style_dotted
+        'Dashed' => line.style_dashed
+    result
+// --------------------------------------- Constant Functions --------------------------------------------------
+
+
+// ---------------------------------------- Inputs --------------------------------------------------
+var g_SETTINGS      = "Settings"
+gmt_tz              = input.string('America/New_York', "Timezone", options = ['America/New_York','GMT-12','GMT-11','GMT-10','GMT-9','GMT-8','GMT-7','GMT-6','GMT-5','GMT-4','GMT-3','GMT-2','GMT-1','GMT+0','GMT+1','GMT+2','GMT+3','GMT+4','GMT+5','GMT+6','GMT+7','GMT+8','GMT+9','GMT+10','GMT+11','GMT+12','GMT+13','GMT+14'], tooltip = "Used to match FVG alerts with previous high/low sweeps on the same day. Note GMT is not adjusted to reflect Daylight Saving Time changes", group = g_SETTINGS)
+
+var g_Imbalance     = "HTF Imbalance (FVG + IFVG)"
+string fvg_tip      = "HTF FVG Settings:\n\t1. Show/Hide timeframe\n\t2. Timeframe to display\n\t3. FVG Color\n\t4. FVG Mitigate Color\n\t5. Max number of FVGs to display\n\t6. Alert When hit FVG or FVG C.E\n\t7. Show Mitigated\n\t8. Show IFVGs\n\tNote:\n\tIf price close through FVG, it becomes IFVG\n\tIf price close through IFVG, it gets deleted"
+htf1_show           = input.bool(true, "", inline = "htf1", group = g_Imbalance)
+htf_1               = input.timeframe("5", "", inline = "htf1", group = g_Imbalance)
+htf1_col            = input.color(color.new(color.gray, 90), "", inline = "htf1", group = g_Imbalance)
+htf1_mit            = input.color(color.new(color.gray, 95), "", inline = "htf1", group = g_Imbalance)
+htf1_max            = input.int(10, "", inline = "htf1", group = g_Imbalance)
+htf1_alert          = input.bool(false, "", inline = "htf1", group = g_Imbalance)
+htf1_mshow          = input.bool(false, "", inline = "htf1", group = g_Imbalance)
+htf1_inv            = input.bool(true, "", inline = "htf1", group = g_Imbalance, tooltip = fvg_tip)
+
+htf2_show           = input.bool(true, "", inline = "htf2", group = g_Imbalance)
+htf_2               = input.timeframe("15", "", inline = "htf2", group = g_Imbalance)
+htf2_col            = input.color(color.new(#c86e32, 90), "", inline = "htf2", group = g_Imbalance)
+htf2_mit            = input.color(color.new(#c86e32, 95), "", inline = "htf2", group = g_Imbalance)
+htf2_max            = input.int(10, "", inline = "htf2", group = g_Imbalance)
+htf2_alert          = input.bool(false, "", inline = "htf2", group = g_Imbalance)
+htf2_mshow          = input.bool(false, "", inline = "htf2", group = g_Imbalance)
+htf2_inv            = input.bool(true, "", inline = "htf2", group = g_Imbalance, tooltip = fvg_tip)
+
+htf3_show           = input.bool(true, "", inline = "htf3", group = g_Imbalance)
+htf_3               = input.timeframe("60", "", inline = "htf3", group = g_Imbalance)
+htf3_col            = input.color(color.new(#4caf50, 90), "", inline = "htf3", group = g_Imbalance)
+htf3_mit            = input.color(color.new(#4caf50, 95), "", inline = "htf3", group = g_Imbalance)
+htf3_max            = input.int(10, "", inline = "htf3", group = g_Imbalance)
+htf3_alert          = input.bool(true, "", inline = "htf3", group = g_Imbalance)
+htf3_mshow          = input.bool(false, "", inline = "htf3", group = g_Imbalance)
+htf3_inv            = input.bool(true, "", inline = "htf3", group = g_Imbalance, tooltip = fvg_tip)
+
+htf4_show           = input.bool(true, "", inline = "htf4", group = g_Imbalance)
+htf_4               = input.timeframe("240", "", inline = "htf4", group = g_Imbalance)
+htf4_col            = input.color(color.new(#ffa726, 90), "", inline = "htf4", group = g_Imbalance)
+htf4_mit            = input.color(color.new(#ffa726, 95), "", inline = "htf4", group = g_Imbalance)
+htf4_max            = input.int(10, "", inline = "htf4", group = g_Imbalance)
+htf4_alert          = input.bool(true, "", inline = "htf4", group = g_Imbalance)
+htf4_mshow          = input.bool(false, "", inline = "htf4", group = g_Imbalance)
+htf4_inv            = input.bool(true, "", inline = "htf4", group = g_Imbalance, tooltip = fvg_tip)
+
+htf5_show           = input.bool(true, "", inline = "htf5", group = g_Imbalance)
+htf_5               = input.timeframe("1D", "", inline = "htf5", group = g_Imbalance)
+htf5_col            = input.color(color.new(#1848cc, 90), "", inline = "htf5", group = g_Imbalance)
+htf5_mit            = input.color(color.new(#1848cc, 95), "", inline = "htf5", group = g_Imbalance)
+htf5_max            = input.int(5, "", inline = "htf5", group = g_Imbalance)
+htf5_alert          = input.bool(true, "", inline = "htf5", group = g_Imbalance)
+htf5_mshow          = input.bool(false, "", inline = "htf5", group = g_Imbalance)
+htf5_inv            = input.bool(true, "", inline = "htf5", group = g_Imbalance, tooltip = fvg_tip)
+
+htf6_show           = input.bool(true, "", inline = "htf6", group = g_Imbalance)
+htf_6               = input.timeframe("1W", "", inline = "htf6", group = g_Imbalance)
+htf6_col            = input.color(color.new(#9c27b0, 90), "", inline = "htf6", group = g_Imbalance)
+htf6_mit            = input.color(color.new(#9c27b0, 95), "", inline = "htf6", group = g_Imbalance)
+htf6_max            = input.int(5, "", inline = "htf6", group = g_Imbalance)
+htf6_alert          = input.bool(true, "", inline = "htf6", group = g_Imbalance)
+htf6_mshow          = input.bool(false, "", inline = "htf6", group = g_Imbalance)
+htf6_inv            = input.bool(true, "", inline = "htf6", group = g_Imbalance, tooltip = fvg_tip)
+
+htf7_show           = input.bool(true, "", inline = "htf7", group = g_Imbalance)
+htf_7               = input.timeframe("1M", "", inline = "htf7", group = g_Imbalance)
+htf7_col            = input.color(color.new(#f23645, 90), "", inline = "htf7", group = g_Imbalance)
+htf7_mit            = input.color(color.new(#f23645, 95), "", inline = "htf7", group = g_Imbalance)
+htf7_max            = input.int(5, "", inline = "htf7", group = g_Imbalance)
+htf7_alert          = input.bool(true, "", inline = "htf7", group = g_Imbalance)
+htf7_mshow          = input.bool(false, "", inline = "htf7", group = g_Imbalance)
+htf7_inv            = input.bool(true, "", inline = "htf7", group = g_Imbalance, tooltip = fvg_tip)
+
+var g_IMB           = "Imbalance Settings"
+fvg_ltf_hide        = input.bool(true, "Hide Lower Timeframes", inline = "IM0", group = g_IMB)
+fvg_ctf_show        = input.bool(true, "Show Current Timeframe", inline = "IM0", group = g_IMB)
+fvg_style           = get_line_type(input.string('Solid', "FVG Style   ", options = ['Solid', 'Dotted', 'Dashed'], inline = "IM1", group = g_IMB))
+fvg_width           = input.int(1, "", minval = 1, maxval = 3, inline = "IM1", group = g_IMB)
+fvg_border          = input.bool(true, "", inline = "IM1", group = g_IMB, tooltip = "1. Style\t\n2. Width \t\n3. Show border")
+ifvg_style          = get_line_type(input.string('Solid', "IFVG Style  ", options = ['Solid', 'Dotted', 'Dashed'], inline = "IM2", group = g_IMB))
+ifvg_width          = input.int(2, "", minval = 1, maxval = 3, inline = "IM2", group = g_IMB)
+ifvg_border         = input.bool(true, "", inline = "IM2", group = g_IMB, tooltip = "1. Style\t\n2. Width \t\n3. Show border")
+fvg_mit_type        = input.string('Wick filled half', 'Mark mitigated when', options = ['None', 'Wick filled', 'Body filled', 'Wick filled half', 'Body filled half'], group = g_IMB, tooltip = "Note that HTF cannot be marked mitigated on lower timeframe and stays visible until HTF confirms it, which is the right approach.")
+fvg_ce_show         = input.bool(true, "Show C.E", inline = "IM3", group = g_IMB)
+fvg_ce_color        = input.color(color.new(color.black, 90), "", inline = "IM3", group = g_IMB)
+fvg_ce_style        = input.string('----', '', options = ['⎯⎯⎯', '----', '····'], inline = "IM3", group = g_IMB)
+fvg_ce_limit        = input.timeframe("5", "", inline = "IM3", group = g_IMB, tooltip = "Hide C.E lower than the timeframe")
+fvg_lbl_show        = input.bool(true, "Show Label", inline = "IM4", group = g_IMB)
+fvg_lbl_size        = input.string(size.tiny, "", options = [size.tiny, size.small, size.normal, size.large, size.huge], inline = "IM4", group = g_IMB)
+fvg_lbl_limit       = input.timeframe("5", "", inline = "IM4", group = g_IMB, tooltip = "Hide labels lower than the timeframe")
+fvg_padding         = input.int(15, "Distance from current candle", minval = 0, group = g_IMB)
+fvg_buffer          = input.int(15, "Spacing between timeframes", minval = 0, group = g_IMB)
+fvg_hist_n          = input.int(300, "HTF candles to scan", minval = 10, maxval = 1000, group = g_IMB, tooltip = "How many recent candles of each timeframe are scanned for FVGs, e.g. 300 = the last 300 monthly candles for 1M and the last 300 5-minute candles for 5m. Higher reaches further back but loads slower.")
+
+// FVG alert text mentions a previous D/W/M/Y high/low swept the same day; that is only tracked when an FVG alert is on
+fvg_any_alert       = (htf1_show and htf1_alert) or (htf2_show and htf2_alert) or (htf3_show and htf3_alert) or (htf4_show and htf4_alert) or (htf5_show and htf5_alert) or (htf6_show and htf6_alert) or (htf7_show and htf7_alert)
+// ---------------------------------------- Inputs --------------------------------------------------
+
+
+// ---------------------------------------- Variables --------------------------------------------------
+var transparent = #ffffff00
+
+// Bar history is read here, at global scope, so the functions below can be called conditionally
+prev_time = time[1]
+
+new_day   = timeframe.change("D")
+new_week  = timeframe.change("W")
+new_month = timeframe.change("M")
+new_year  = timeframe.change("12M")
+// ---------------------------------------- Variables --------------------------------------------------
+
+
+// ---------------------------------------- Core Logic --------------------------------------------------
+// ---- HTF Imbalance (FVG + IFVG): optimised version of the FVG part of the old "ICT HTF FVG & Order Blocks" ----
+// PERF changes vs the original:
+//  - Nothing runs per timeframe on historical chart bars. On the last bar, each shown timeframe makes one small data
+//    request for its last 'HTF candles to scan' completed candles and builds its FVG list from them. In realtime, a
+//    second small request adds each new candle when it closes. Off / hidden timeframes make no request at all.
+//  - Mitigation, alert and IFVG checks keep each list's nearest trigger levels, so a candle costs a few comparisons and
+//    the loop over the stored FVGs (up to 100) only runs when one of them is crossed.
+//  - Settings, timeframe text and label spacing are built once.
+//  - Drawings are only created/positioned on the last bar.
+type fvg_cfg
+    bool   show
+    string htf
+    string htf_txt      // e.g. "5m", "1H", "1D"
+    int    htf_ms
+    color  col
+    color  mit_col
+    color  edge_col     // label text / fresh FVG border
+    bool   alert
+    bool   mit_show
+    int    max_count
+    bool   inv
+    bool   detect       // timeframe is shown on this chart (not hidden as a lower timeframe)
+    bool   lbl_ok
+    bool   ce_ok
+    int    step         // label slot: number of shown timeframes up to this one
+
+type fvg_imb
+    int   open_time
+    float open
+    float middle
+    float close
+    bool  bull
+    float mit_lvl       // price level that marks it mitigated (depends on 'Mark mitigated when')
+    bool  ifvg         = false
+    bool  invalid_ifvg = false
+    bool  is_mit       = false
+    int   mit_time     = 0
+    bool  alerted      = false
+    bool  alerted_ce   = false
+    line  ce
+    label lbl
+    box   bx
+
+type fvg_set
+    fvg_cfg   cfg
+    fvg_imb[] imbs      // newest first, at most 100
+    // PERF: nearest trigger levels (na = none). A check loop only runs when price crosses one of them.
+    float     bull_mit      // highest mitigation level of an unmitigated bullish FVG
+    float     bear_mit      // lowest mitigation level of an unmitigated bearish FVG
+    float     bull_alert    // highest pending alert level (top, then C.E) of an unmitigated bullish FVG
+    float     bear_alert
+    float     bull_ifvg     // highest level a close must go below to turn a bullish FVG into an IFVG
+    float     bear_ifvg
+    float     bull_inv      // lowest top a close must go above to invalidate a bullish IFVG
+    float     bear_inv
+    int       last_t        // open time of the newest HTF candle processed
+    int       seen_t        // HTF bar the list was last brought up to date on (a change means a new candle has closed)
+
+// One completed HTF candle
+type fvg_bar
+    float o
+    float h
+    float l
+    float c
+    int   t
+
+type sweep_t
+    string name
+    int    ph_swept
+    int    pl_swept
+    float  ph           // previous period's high / low
+    float  pl
+
+fvg_mit_none = fvg_mit_type == "None"
+fvg_mit_body = fvg_mit_type == "Body filled" or fvg_mit_type == "Body filled half"
+fvg_mit_half = fvg_mit_type == "Wick filled half" or fvg_mit_type == "Body filled half"
+fvg_ce_line  = fvg_ce_style == '----' ? line.style_dashed : fvg_ce_style == '····' ? line.style_dotted : line.style_solid
+
+fvg_htf_text(string htf) =>
+    formatted = htf
+    seconds = timeframe.in_seconds(htf)
+    if seconds < 60
+        formatted := str.tostring(seconds) + "s"
+    else if (seconds / 60) < 60
+        formatted := str.tostring((seconds/60)) + "m"
+    else if (seconds/60/60) < 24
+        formatted := str.tostring((seconds/60/60)) + "H"
+    formatted
+
+fvg_new_set(bool show, string htf, color col, color mit_col, int max_count, bool alrt, bool mit_show, bool inv, bool detect, int step) =>
+    int sec = timeframe.in_seconds(htf)
+    fvg_cfg cfg = fvg_cfg.new(show, htf, fvg_htf_text(htf), sec * 1000, col, mit_col, color.new(col, color.t(col) / 3), alrt, mit_show, max_count, inv, detect, sec >= timeframe.in_seconds(fvg_lbl_limit), sec >= timeframe.in_seconds(fvg_ce_limit), step)
+    fvg_set.new(cfg, array.new<fvg_imb>(), na, na, na, na, na, na, na, na)
+
+// Shown on this chart? Lower timeframes are hidden when 'Hide Lower Timeframes' is on
+fvg_sec_1 = timeframe.in_seconds(htf_1)
+fvg_sec_2 = timeframe.in_seconds(htf_2)
+fvg_sec_3 = timeframe.in_seconds(htf_3)
+fvg_sec_4 = timeframe.in_seconds(htf_4)
+fvg_sec_5 = timeframe.in_seconds(htf_5)
+fvg_sec_6 = timeframe.in_seconds(htf_6)
+fvg_sec_7 = timeframe.in_seconds(htf_7)
+fvg_d1 = htf1_show and (not fvg_ltf_hide or (fvg_ctf_show and timeframe.in_seconds() == fvg_sec_1) or timeframe.in_seconds() < fvg_sec_1)
+fvg_d2 = htf2_show and (not fvg_ltf_hide or (fvg_ctf_show and timeframe.in_seconds() == fvg_sec_2) or timeframe.in_seconds() < fvg_sec_2)
+fvg_d3 = htf3_show and (not fvg_ltf_hide or (fvg_ctf_show and timeframe.in_seconds() == fvg_sec_3) or timeframe.in_seconds() < fvg_sec_3)
+fvg_d4 = htf4_show and (not fvg_ltf_hide or (fvg_ctf_show and timeframe.in_seconds() == fvg_sec_4) or timeframe.in_seconds() < fvg_sec_4)
+fvg_d5 = htf5_show and (not fvg_ltf_hide or (fvg_ctf_show and timeframe.in_seconds() == fvg_sec_5) or timeframe.in_seconds() < fvg_sec_5)
+fvg_d6 = htf6_show and (not fvg_ltf_hide or (fvg_ctf_show and timeframe.in_seconds() == fvg_sec_6) or timeframe.in_seconds() < fvg_sec_6)
+fvg_d7 = htf7_show and (not fvg_ltf_hide or (fvg_ctf_show and timeframe.in_seconds() == fvg_sec_7) or timeframe.in_seconds() < fvg_sec_7)
+fvg_s1 = fvg_d1 ? 1 : 0
+fvg_s2 = fvg_s1 + (fvg_d2 ? 1 : 0)
+fvg_s3 = fvg_s2 + (fvg_d3 ? 1 : 0)
+fvg_s4 = fvg_s3 + (fvg_d4 ? 1 : 0)
+fvg_s5 = fvg_s4 + (fvg_d5 ? 1 : 0)
+fvg_s6 = fvg_s5 + (fvg_d6 ? 1 : 0)
+fvg_s7 = fvg_s6 + (fvg_d7 ? 1 : 0)
+fvg_any = fvg_d1 or fvg_d2 or fvg_d3 or fvg_d4 or fvg_d5 or fvg_d6 or fvg_d7
+
+var fvg_1 = fvg_new_set(htf1_show, htf_1, htf1_col, htf1_mit, htf1_max, htf1_alert, htf1_mshow, htf1_inv, fvg_d1, fvg_s1)
+var fvg_2 = fvg_new_set(htf2_show, htf_2, htf2_col, htf2_mit, htf2_max, htf2_alert, htf2_mshow, htf2_inv, fvg_d2, fvg_s2)
+var fvg_3 = fvg_new_set(htf3_show, htf_3, htf3_col, htf3_mit, htf3_max, htf3_alert, htf3_mshow, htf3_inv, fvg_d3, fvg_s3)
+var fvg_4 = fvg_new_set(htf4_show, htf_4, htf4_col, htf4_mit, htf4_max, htf4_alert, htf4_mshow, htf4_inv, fvg_d4, fvg_s4)
+var fvg_5 = fvg_new_set(htf5_show, htf_5, htf5_col, htf5_mit, htf5_max, htf5_alert, htf5_mshow, htf5_inv, fvg_d5, fvg_s5)
+var fvg_6 = fvg_new_set(htf6_show, htf_6, htf6_col, htf6_mit, htf6_max, htf6_alert, htf6_mshow, htf6_inv, fvg_d6, fvg_s6)
+var fvg_7 = fvg_new_set(htf7_show, htf_7, htf7_col, htf7_mit, htf7_max, htf7_alert, htf7_mshow, htf7_inv, fvg_d7, fvg_s7)
+
+// Previous D/W/M/Y high/low sweep times, for the FVG alert text ("... after sweeping PD Low")
+var swp_y = sweep_t.new("Y", na, na)
+var swp_m = sweep_t.new("M", na, na)
+var swp_w = sweep_t.new("W", na, na)
+var swp_d = sweep_t.new("D", na, na)
+
+// PERF: the previous period's high/low comes from one tiny data request at the start of each period (and on the first
+// bar) instead of tracking running highs/lows on every bar. Only the current period's sweeps matter for the alert text.
+swp_update(sweep_t s, bool is_new, string tf) =>
+    if is_new or barstate.isfirst
+        [ph, pl] = request.security(syminfo.tickerid, tf, [high[1], low[1]], lookahead = barmerge.lookahead_on, calc_bars_count = 10)
+        s.ph       := ph
+        s.pl       := pl
+        s.ph_swept := na
+        s.pl_swept := na
+    if na(s.ph_swept) and high >= s.ph
+        s.ph_swept := time
+    if na(s.pl_swept) and low <= s.pl
+        s.pl_swept := time
+
+if fvg_any_alert
+    swp_update(swp_y, new_year,  "12M")
+    swp_update(swp_m, new_month, "1M")
+    swp_update(swp_w, new_week,  "1W")
+    swp_update(swp_d, new_day,   "1D")
+
+fvg_swept_on_day(int swept_time, int t) =>
+    bool result = false
+    if not na(swept_time)
+        result := year(swept_time, gmt_tz) == year(t, gmt_tz) and month(swept_time, gmt_tz) == month(t, gmt_tz) and dayofmonth(swept_time, gmt_tz) == dayofmonth(t, gmt_tz)
+    result
+
+fvg_alert_text(fvg_imb m, string imbtf, bool bullish, bool ce) =>
+    string swept = na
+    if fvg_swept_on_day(bullish ? swp_y.pl_swept : swp_y.ph_swept, m.open_time)
+        swept := swp_y.name
+    else if fvg_swept_on_day(bullish ? swp_m.pl_swept : swp_m.ph_swept, m.open_time)
+        swept := swp_m.name
+    else if fvg_swept_on_day(bullish ? swp_w.pl_swept : swp_w.ph_swept, m.open_time)
+        swept := swp_w.name
+    else if fvg_swept_on_day(bullish ? swp_d.pl_swept : swp_d.ph_swept, m.open_time)
+        swept := swp_d.name
+    string txt = "Price hit " + imbtf + (bullish ? " bullish" : " bearish") + " FVG" + (ce ? " C.E" : "")
+    na(swept) ? txt : txt + " after sweeping P" + swept + (bullish ? " Low" : " High")
+
+fvg_hi(float a, float b) => na(a) ? b : math.max(a, b)
+fvg_lo(float a, float b) => na(a) ? b : math.min(a, b)
+
+// Recompute the trigger levels after FVGs change state or are removed
+fvg_refresh(fvg_set S) =>
+    float b_mit = na
+    float s_mit = na
+    float b_al  = na
+    float s_al  = na
+    float b_if  = na
+    float s_if  = na
+    float b_inv = na
+    float s_inv = na
+    int sz = S.imbs.size()
+    if sz > 0
+        for i = 0 to sz - 1
+            fvg_imb m = S.imbs.get(i)
+            bool pending = S.cfg.alert and not (m.alerted and m.alerted_ce)
+            float al = m.alerted ? m.middle : m.close
+            if m.bull
+                if not m.is_mit
+                    b_mit := fvg_hi(b_mit, m.mit_lvl)
+                    if pending
+                        b_al := fvg_hi(b_al, al)
+                if not m.ifvg and not m.invalid_ifvg
+                    b_if := fvg_hi(b_if, m.open - 0.5 * (m.middle - m.open))
+                else if m.ifvg and not m.invalid_ifvg
+                    b_inv := fvg_lo(b_inv, m.close)
+            else
+                if not m.is_mit
+                    s_mit := fvg_lo(s_mit, m.mit_lvl)
+                    if pending
+                        s_al := fvg_lo(s_al, al)
+                if not m.ifvg and not m.invalid_ifvg
+                    s_if := fvg_lo(s_if, m.open + 0.5 * (m.open - m.middle))
+                else if m.ifvg and not m.invalid_ifvg
+                    s_inv := fvg_hi(s_inv, m.close)
+    S.bull_mit   := b_mit
+    S.bear_mit   := s_mit
+    S.bull_alert := b_al
+    S.bear_alert := s_al
+    S.bull_ifvg  := b_if
+    S.bear_ifvg  := s_if
+    S.bull_inv   := b_inv
+    S.bear_inv   := s_inv
+
+fvg_add(fvg_set S, float o, float c, int t) =>
+    float mid  = (o + c) / 2
+    bool  bull = o < c
+    float pct  = 0.01 / 100 * o
+    float lvl  = fvg_mit_half ? mid : bull ? o + pct : o - pct
+    S.imbs.unshift(fvg_imb.new(t, o, mid, c, bull, lvl))
+    if S.imbs.size() > 100
+        fvg_imb old = S.imbs.pop()
+        box.delete(old.bx)
+        line.delete(old.ce)
+        label.delete(old.lbl)
+        fvg_refresh(S)
+    else
+        // a new FVG is fresh, so it can only widen the trigger levels
+        if bull
+            S.bull_mit := fvg_hi(S.bull_mit, lvl)
+            if S.cfg.alert
+                S.bull_alert := fvg_hi(S.bull_alert, c)
+            S.bull_ifvg := fvg_hi(S.bull_ifvg, o - 0.5 * (mid - o))
+        else
+            S.bear_mit := fvg_lo(S.bear_mit, lvl)
+            if S.cfg.alert
+                S.bear_alert := fvg_lo(S.bear_alert, c)
+            S.bear_ifvg := fvg_lo(S.bear_ifvg, o + 0.5 * (o - mid))
+
+// pb / pr: the candle's low / high (wick modes) or min / max of its open & close (body modes); mt: time it is marked at
+fvg_mitigate(fvg_set S, float pb, float pr, int mt) =>
+    int sz = S.imbs.size()
+    if sz > 0
+        bool drop = not S.cfg.mit_show and not S.cfg.inv
+        for i = sz - 1 to 0
+            fvg_imb m = S.imbs.get(i)
+            if not m.is_mit
+                if m.bull ? pb <= m.mit_lvl : pr >= m.mit_lvl
+                    m.is_mit   := true
+                    m.mit_time := mt
+                    if drop
+                        // neither mitigated nor inverse FVGs are shown for this timeframe: forget it
+                        box.delete(m.bx)
+                        line.delete(m.ce)
+                        label.delete(m.lbl)
+                        S.imbs.remove(i)
+        fvg_refresh(S)
+
+fvg_fire(fvg_set S, fvg_imb m, bool bullish, bool ce) =>
+    // alerts only fire in realtime, so the text isn't built on history
+    if barstate.isrealtime
+        alert(fvg_alert_text(m, S.cfg.htf_txt, bullish, ce), alert.freq_once_per_bar)
+
+fvg_alerts(fvg_set S) =>
+    int sz = S.imbs.size()
+    if sz > 0
+        bool changed = false
+        for i = sz - 1 to 0
+            fvg_imb m = S.imbs.get(i)
+            if not m.is_mit
+                if m.bull
+                    if low <= m.close and m.open < low and not m.alerted
+                        fvg_fire(S, m, true, false)
+                        m.alerted := true
+                        changed := true
+                    else if low <= m.middle and m.open < low and not m.alerted_ce
+                        fvg_fire(S, m, true, true)
+                        m.alerted_ce := true
+                        changed := true
+                else
+                    if high >= m.close and m.open > high and not m.alerted
+                        fvg_fire(S, m, false, false)
+                        m.alerted := true
+                        changed := true
+                    else if high >= m.middle and m.open > high and not m.alerted_ce
+                        fvg_fire(S, m, false, true)
+                        m.alerted_ce := true
+                        changed := true
+        if changed
+            fvg_refresh(S)
+
+// A candle closing beyond an FVG (by a quarter of its height) turns it into an IFVG; a close back through an IFVG invalidates it
+fvg_ifvg(fvg_set S, float cl) =>
+    int sz = S.imbs.size()
+    if sz > 0
+        for i = sz - 1 to 0
+            fvg_imb m = S.imbs.get(i)
+            if not m.ifvg and not m.invalid_ifvg
+                m.ifvg := m.bull ? cl < m.open - 0.5 * (m.middle - m.open) : cl > m.open + 0.5 * (m.open - m.middle)
+            else if m.ifvg and not m.invalid_ifvg
+                m.invalid_ifvg := m.bull ? cl > m.close : cl < m.close
+        fvg_refresh(S)
+
+// One completed HTF candle b, with b3 = the candle two before it (an FVG is the gap between them).
+// next_t: open time of the candle after b (when a mitigation by b is marked).
+fvg_step(fvg_set S, fvg_bar b, fvg_bar b3, int next_t) =>
+    if b.h < b3.l or b.l > b3.h
+        bool add = true
+        if S.imbs.size() > 0
+            add := S.imbs.first().open_time < b3.t
+        if add
+            fvg_add(S, b.h < b3.l ? b3.l : b3.h, b.h < b3.l ? b.h : b.l, b3.t)
+    if not fvg_mit_none
+        float pb = fvg_mit_body ? math.min(b.o, b.c) : b.l
+        float pr = fvg_mit_body ? math.max(b.o, b.c) : b.h
+        if pb <= S.bull_mit or pr >= S.bear_mit
+            fvg_mitigate(S, pb, pr, next_t)
+    if S.cfg.inv and (b.c < S.bull_ifvg or b.c > S.bear_ifvg or b.c > S.bull_inv or b.c < S.bear_inv)
+        fvg_ifvg(S, b.c)
+
+// Runs inside a timeframe's data request: its last `keep` completed candles, oldest first.
+// Each bar adds the candle before it, so (with lookahead_on) only confirmed candles are ever returned.
+fvg_hist(int keep) =>
+    var fvg_bar[] bars = array.new<fvg_bar>()
+    if not na(time[1])
+        bars.push(fvg_bar.new(open[1], high[1], low[1], close[1], time[1]))
+        if bars.size() > keep
+            bars.shift()
+    bars
+
+// Build a timeframe's FVG list from its recent candles (oldest first). now_t: open time of the current HTF bar.
+fvg_sync(fvg_set S, fvg_bar[] bars, int now_t) =>
+    if not na(bars)
+        int n = bars.size()
+        if n >= 3
+            for i = 2 to n - 1
+                int next_t = now_t
+                if i < n - 1
+                    next_t := bars.get(i + 1).t
+                fvg_step(S, bars.get(i), bars.get(i - 2), next_t)
+            S.last_t := bars.get(n - 1).t
+
+// Realtime: one newly closed candle (o, h, l, c, t) and the candle two before it (h3, l3, t3)
+fvg_live(fvg_set S, float o, float h, float l, float c, int t, float h3, float l3, int t3, int now_t) =>
+    if not na(t) and not na(t3)
+        if na(S.last_t) or t > S.last_t
+            fvg_step(S, fvg_bar.new(o, h, l, c, t), fvg_bar.new(na, h3, l3, na, t3), now_t)
+            S.last_t := t
+
+// Last bar and realtime: build the list once from the timeframe's recent candles, add each new candle when it closes,
+// and check alerts on realtime ticks.
+fvg_update(fvg_set S, string htf) =>
+    int now_t = time(htf)
+    if na(S.seen_t)
+        fvg_bar[] bars = request.security(syminfo.tickerid, htf, fvg_hist(fvg_hist_n), lookahead = barmerge.lookahead_on, calc_bars_count = fvg_hist_n + 5)
+        fvg_sync(S, bars, now_t)
+    if na(S.seen_t) or now_t != S.seen_t
+        [o1, h1, l1, c1, t1, h3, l3, t3] = request.security(syminfo.tickerid, htf, [open[1], high[1], low[1], close[1], time[1], high[3], low[3], time[3]], lookahead = barmerge.lookahead_on, calc_bars_count = 10)
+        fvg_live(S, o1, h1, l1, c1, t1, h3, l3, t3, now_t)
+        S.seen_t := now_t
+    if barstate.isrealtime and S.cfg.alert and (low <= S.bull_alert or high >= S.bear_alert)
+        fvg_alerts(S)
+
+// Draw / update one FVG (AddZone + UpdateImbalance). Returns true for mitigated / invalid ones, as the original did:
+// only those count toward the timeframe's max, so fresh FVGs near price are always shown.
+fvg_zone(fvg_set S, fvg_imb m, int buffer) =>
+    fvg_cfg cfg = S.cfg
+    string txt_label = (m.bull ? "▲" : "▼") + cfg.htf_txt
+    if na(m.bx)
+        m.bx := box.new(m.open_time, m.open, buffer, m.close, transparent, 0, bgcolor = cfg.col, xloc = xloc.bar_time)
+        if fvg_lbl_show and cfg.lbl_ok
+            m.lbl := label.new(buffer, m.middle, text = txt_label, xloc = xloc.bar_time, textcolor = cfg.edge_col, style = label.style_label_left, color = transparent, size = fvg_lbl_size)
+        if fvg_ce_show and cfg.ce_ok
+            m.ce := line.new(m.open_time, m.middle, buffer, m.middle, xloc = xloc.bar_time, style = fvg_ce_line, color = fvg_ce_color)
+
+    bool is_mit = m.is_mit
+    bool ifvg   = false
+    if cfg.inv
+        if m.is_mit and not m.ifvg
+            is_mit := true
+        else if m.ifvg
+            is_mit := m.invalid_ifvg
+            ifvg   := true
+
+    int mit_t = m.is_mit ? m.mit_time : 0
+    box.set_right(m.bx, is_mit ? mit_t : buffer)
+    box.set_bgcolor(m.bx, is_mit ? cfg.mit_col : cfg.col)
+    box.set_border_style(m.bx, ifvg and not is_mit ? ifvg_style : fvg_style)
+    box.set_border_width(m.bx, ifvg ? (ifvg_border ? ifvg_width : 0) : (fvg_border ? fvg_width : 0))
+    box.set_border_color(m.bx, fvg_border and not ifvg ? (is_mit ? cfg.col : cfg.edge_col) : cfg.col)
+    if fvg_lbl_show and cfg.lbl_ok
+        label.set_x(m.lbl, is_mit ? mit_t : buffer)
+        label.set_text(m.lbl, cfg.inv and ifvg and not m.invalid_ifvg ? (m.bull ? "▼" : "▲") + cfg.htf_txt + " IFVG" : txt_label)
+        label.set_textcolor(m.lbl, cfg.edge_col)
+    if fvg_ce_show and cfg.ce_ok
+        line.set_x2(m.ce, is_mit ? mit_t : buffer)
+        line.set_color(m.ce, fvg_ce_color)
+
+    bool clear = false
+    if is_mit
+        bool clear_mit = time > mit_t + cfg.htf_ms
+        if cfg.inv and not cfg.mit_show
+            if not ifvg
+                clear := clear_mit
+            else if m.invalid_ifvg
+                clear := true
+        else if not cfg.mit_show
+            clear := clear_mit
+        if clear and not na(m.bx)
+            box.delete(m.bx)
+            line.delete(m.ce)
+            label.delete(m.lbl)
+    is_mit
+
+// Last bar: show FVGs near price (within the daily ATR on intraday charts, 3x / 12x the monthly ATR on daily / weekly)
+fvg_display(fvg_set S, float rl, float rh) =>
+    fvg_cfg cfg = S.cfg
+    int sz = S.imbs.size()
+    if cfg.show and sz > 0
+        int buffer = time + (time - prev_time) * (fvg_padding + 1 + fvg_buffer * (cfg.step - 1))
+        int count = 0
+        for i = 0 to sz - 1
+            fvg_imb m = S.imbs.get(i)
+            bool shown = math.max(m.open, m.close) > rl and math.min(m.open, m.close) < rh and count < cfg.max_count
+            if shown
+                if fvg_zone(S, m, buffer)
+                    count += 1
+            if not shown and not na(m.bx)
+                // reset so it can be drawn again if price comes back (the original kept the deleted ids)
+                box   b0 = m.bx
+                label l0 = m.lbl
+                line  c0 = m.ce
+                m.bx  := na
+                m.lbl := na
+                m.ce  := na
+                box.delete(b0)
+                label.delete(l0)
+                line.delete(c0)
+
+// ---- Build, update and draw: last bar and realtime only ----
+px_tf = (timeframe.isseconds or timeframe.isminutes) ? "1D" : "1M"
+
+if barstate.islast and fvg_any
+    if fvg_d1
+        fvg_update(fvg_1, htf_1)
+    if fvg_d2
+        fvg_update(fvg_2, htf_2)
+    if fvg_d3
+        fvg_update(fvg_3, htf_3)
+    if fvg_d4
+        fvg_update(fvg_4, htf_4)
+    if fvg_d5
+        fvg_update(fvg_5, htf_5)
+    if fvg_d6
+        fvg_update(fvg_6, htf_6)
+    if fvg_d7
+        fvg_update(fvg_7, htf_7)
+
+    // "Near price" range: ATR(14) of the last completed daily candles (intraday charts) or monthly candles (daily / weekly)
+    float px_atr = request.security(syminfo.tickerid, px_tf, ta.atr(14)[1], lookahead = barmerge.lookahead_on, calc_bars_count = 100)
+    float fvg_rh = 0
+    float fvg_rl = 0
+    if timeframe.isseconds or timeframe.isminutes
+        fvg_rh := close + px_atr
+        fvg_rl := close - px_atr
+    if timeframe.isdaily
+        fvg_rh := close + px_atr * 3
+        fvg_rl := close - px_atr * 3
+    if timeframe.isweekly
+        fvg_rh := close + px_atr * 12
+        fvg_rl := close - px_atr * 12
+    fvg_display(fvg_1, fvg_rl, fvg_rh)
+    fvg_display(fvg_2, fvg_rl, fvg_rh)
+    fvg_display(fvg_3, fvg_rl, fvg_rh)
+    fvg_display(fvg_4, fvg_rl, fvg_rh)
+    fvg_display(fvg_5, fvg_rl, fvg_rh)
+    fvg_display(fvg_6, fvg_rl, fvg_rh)
+    fvg_display(fvg_7, fvg_rl, fvg_rh)
+// ---------------------------------------- Core Logic --------------------------------------------------

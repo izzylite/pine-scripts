@@ -1,0 +1,1842 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Maze1540
+
+//@version=5
+indicator("ICT Liquidity & HTF FVG", "Liquidity & HTF FVG", true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500,max_bars_back = 500)
+
+
+// --------------------------------------- Constant Functions --------------------------------------------------
+get_line_type(_style) =>
+    result = switch _style
+        'Solid' => line.style_solid
+        'Dotted' => line.style_dotted
+        'Dashed' => line.style_dashed
+    result
+
+get_size(x) =>
+    result = switch x
+        'Auto' => size.auto
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+        
+get_table_pos(pos) =>
+    result = switch pos
+        "Bottom Center" => position.bottom_center
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Top Center" => position.top_center
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+
+
+// ---------------------------------------- Constant Functions --------------------------------------------------
+
+    
+// ---------------------------------------- Inputs --------------------------------------------------
+var g_SETTINGS      = "Settings"
+max_days            = input.int(20, "Session Drawing Limit", 1, tooltip = "Only this many drawings will be kept on the chart, for each selected drawing type (killzone boxes, pivot lines, open lines, etc.)", group = g_SETTINGS)
+tf_limit            = input.timeframe("30", "Session Timeframe Limit", tooltip = "Drawings will not appear on timeframes greater than or equal to this", group = g_SETTINGS)
+gmt_tz              = input.string('America/New_York', "Timezone", options = ['America/New_York','GMT-12','GMT-11','GMT-10','GMT-9','GMT-8','GMT-7','GMT-6','GMT-5','GMT-4','GMT-3','GMT-2','GMT-1','GMT+0','GMT+1','GMT+2','GMT+3','GMT+4','GMT+5','GMT+6','GMT+7','GMT+8','GMT+9','GMT+10','GMT+11','GMT+12','GMT+13','GMT+14'], tooltip = "Note GMT is not adjusted to reflect Daylight Saving Time changes", group = g_SETTINGS)
+lbl_size            = get_size(input.string('Tiny', "Label Size", options = ['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'], tooltip = "The size of all labels", group = g_SETTINGS))
+txt_color           = input.color(color.black, "Text Color", tooltip = "The color of all label and table text", group = g_SETTINGS)
+
+
+
+
+var g_KZ            = "Killzones"
+show_kz             = input.bool(true, "Show Killzone Boxes", inline = "KZ", group = g_KZ)
+show_kz_text        = input.bool(false, "Display Text", inline = "KZ", group = g_KZ)
+box_transparency_kz    = input.int(90, "Box Transparency", 0, 100, group = g_KZ)
+text_transparency_kz   = input.int(50, "Text Transparency", 0, 100, group = g_KZ)
+
+use_asia_kz            = input.bool(true, "", inline = "ASIA", group = g_KZ)
+as_txt_kz              = input.string("Asia Killzone", "", inline = "ASIA", group = g_KZ)
+asia_kz                = input.session("2000-0000", "", inline = "ASIA", group = g_KZ)
+as_color_kz            = input.color(#2962ff, "", inline = "ASIA", group = g_KZ)
+
+use_london_kz          = input.bool(true, "", inline = "LONDON", group = g_KZ)
+lo_txt_kz              = input.string("London Killzone", "", inline = "LONDON", group = g_KZ)
+london_kz              = input.session("0200-0500", "", inline = "LONDON", group = g_KZ)
+lo_color_kz            = input.color(#388e3c, "", inline = "LONDON", group = g_KZ)
+
+use_nyam_kz            = input.bool(true, "", inline = "NYAM", group = g_KZ)
+nyam_txt_kz            = input.string("NY AM Killzone", "", inline = "NYAM", group = g_KZ)
+nyam_kz                = input.session("0830-1100", "", inline = "NYAM", group = g_KZ)
+nyam_color_kz          = input.color(#f57c00, "", inline = "NYAM", group = g_KZ)
+
+use_nypm_kz            = input.bool(true, "", inline = "NYPM", group = g_KZ)
+nypm_txt_kz            = input.string("NY PM Killzone", "", inline = "NYPM", group = g_KZ)
+nypm_kz                = input.session("1330-1600", "", inline = "NYPM", group = g_KZ)
+nypm_color_kz          = input.color(#9c27b0, "", inline = "NYPM", group = g_KZ)
+
+use_cutoff_kz          = input.bool(false, "Drawing Cutoff Time", inline = "C0K", tooltip = "When enabled, all open killzone pivot lines will stop extending at this time", group = g_KZ)
+cutoff_kz              = input.session("1600-1601", "", inline = "C0K", group = g_KZ)
+
+
+var g_LABELS        = "Killzone Pivots"
+show_pivots         = input.bool(true, "Show Pivots", inline = "PV", group = g_LABELS)
+use_alerts          = input.bool(true, "Alert Broken Pivots", inline = "PV", group = g_LABELS)
+show_midpoints      = input.bool(false, "Show Pivot Midpoints", group = g_LABELS)
+ext_pivots          = input.string("Until Mitigated", "Extend Pivots...", options = ['Until Mitigated', 'Past Mitigation'], group = g_LABELS)
+ext_which           = input.string("All", "...From Which Sessions", options = ['Most Recent', 'All'], group = g_LABELS)
+
+
+kzp_style           = get_line_type(input.string(defval = 'Solid', title = "Pivot Style", options = ['Solid', 'Dotted', 'Dashed'], inline = "KZP", group = g_LABELS))
+kzp_width           = input.int(1, "", inline = "KZP", group = g_LABELS)
+kzm_style           = get_line_type(input.string(defval = 'Dotted', title = "Midpoint Style", options = ['Solid', 'Dotted', 'Dashed'], inline = "KZM", group = g_LABELS))
+kzm_width           = input.int(1, "", inline = "KZM", group = g_LABELS)
+
+
+
+var g_SS            = "Session"
+show_ss             = input.bool(true, "Show Session Boxes", inline = "SS", group = g_SS)
+show_ss_text        = input.bool(false, "Display Text", inline = "SS", group = g_SS)
+box_transparency_ss    = input.int(90, "Box Transparency", 0, 100, group = g_SS)
+text_transparency_ss   = input.int(50, "Text Transparency", 0, 100, group = g_SS)
+
+use_asia_ss            = input.bool(true, "", inline = "ASIA_SESSION", group = g_SS)
+as_txt_ss              = input.string("Asia Session", "", inline = "ASIA_SESSION", group = g_SS)
+asia_session           = input.session("2000-0200", "", inline = "ASIA_SESSION", group = g_SS)
+as_color_ss            = input.color(#2962ff, "", inline = "ASIA_SESSION", group = g_SS)
+
+use_london_ss          = input.bool(true, "", inline = "LODON_SESSION", group = g_SS)
+lo_txt_ss              = input.string("London Session", "", inline = "LODON_SESSION", group = g_SS)
+london_session         = input.session("0300-0700", "", inline = "LODON_SESSION", group = g_SS)
+lo_color_ss            = input.color(#26c6da, "", inline = "LODON_SESSION", group = g_SS)
+
+use_ny_ss              = input.bool(true, "", inline = "NY_SESSION", group = g_SS)
+ny_txt_ss              = input.string("NY Session", "", inline = "NY_SESSION", group = g_SS)
+ny_session             = input.session("0800-1200", "", inline = "NY_SESSION", group = g_SS)
+na_color_ss            = input.color(#ffa726, "", inline = "NY_SESSION", group = g_SS)
+
+use_nylu_ss            = input.bool(true, "", inline = "NYLU", group = g_SS)
+nl_txt_ss              = input.string("NY Lunch", "", inline = "NYLU", group = g_SS)
+nylu_session           = input.session("1200-1300", "", inline = "NYLU", group = g_SS)
+nl_color_ss              = input.color(color.yellow, "", inline = "NYLU", group = g_SS)
+
+use_nypm_ss            = input.bool(true, "", inline = "NYPM", group = g_SS)
+np_txt_ss              = input.string("NY PM", "", inline = "NYPM", group = g_SS)
+nypm_session           = input.session("1330-1600", "", inline = "NYPM", group = g_SS)
+np_color_ss            = input.color(#9c27b0, "", inline = "NYPM", group = g_SS)
+
+
+
+var g_DWM           = "Day - Week - Month - Year"
+g_DWM_tooltip       = "Day - Week - Month - Year \n\tCurrent Opening Price\n\tPrevious Highs & Lows\n\t Limit PHL to show on chart\n\tMark start of new day, weeek or month\n\tDivider will not appear on higer tf"
+use_hl_alerts       = input.bool(true, "Alert Broken PHL", inline = "DOW", group = g_DWM)
+use_op_alerts       = input.bool(true, "Alert Hit Open Price", inline = "DOW", group = g_DWM)
+
+
+show_d_open         = input.bool(true, "D Open", inline = "DO", group = g_DWM)
+dhl                 = input.bool(true, "PHL", inline = "DO", tooltip = "", group = g_DWM)
+max_d_hl            = input.int(10, "", 1,50, inline = "DO",group = g_DWM)
+ds                  = input.bool(true, "Div", inline = "DO", tooltip = g_DWM_tooltip, group = g_DWM)
+dhl_tf_limit         = input.timeframe("240", "",inline = "DO", tooltip = "", group = g_DWM)
+d_color             = input.color(#000000, "", inline = "DO", group = g_DWM)
+
+
+
+show_w_open         = input.bool(true, "W Open", inline = "WO", group = g_DWM)
+whl                 = input.bool(true, "PHL", inline = "WO", tooltip = "", group = g_DWM)
+max_w_hl            = input.int(10, "", 1,50,inline = "WO", group = g_DWM)
+ws                  = input.bool(false, "Div", inline = "WO", tooltip = g_DWM_tooltip, group = g_DWM)
+whl_tf_limit         = input.timeframe("D", "",inline = "WO", tooltip = "", group = g_DWM)
+w_color             = input.color(#512da8, "", inline = "WO", group = g_DWM)
+
+
+show_m_open         = input.bool(true, "M Open", inline = "MO", group = g_DWM)
+mhl                 = input.bool(true, "PHL", inline = "MO", tooltip = "", group = g_DWM)
+max_m_hl            = input.int(3, "", 1,50,inline = "MO", group = g_DWM)
+ms                  = input.bool(false, "Div", inline = "MO", tooltip = g_DWM_tooltip, group = g_DWM)
+mhl_tf_limit         = input.timeframe("W", "",inline = "MO", tooltip = "", group = g_DWM)
+m_color             = input.color(color.red, "", inline = "MO", group = g_DWM)
+
+
+show_y_open         = input.bool(true, "Y Open", inline = "YR", group = g_DWM)
+yhl                 = input.bool(true, "PHL", inline = "YR", tooltip = "", group = g_DWM)
+max_y_hl            = input.int(1, "", 1,50,inline = "YR", group = g_DWM)
+ys                  = input.bool(false, "Div", inline = "YR", tooltip = g_DWM_tooltip, group = g_DWM)
+yhl_tf_limit         = input.timeframe("M", "",inline = "YR", tooltip = "", group = g_DWM)
+y_color             = input.color(#f57c00, "", inline = "YR", group = g_DWM)
+
+ 
+
+op_style           = get_line_type(input.string(defval = 'Solid', title = "Open Style", options = ['Solid', 'Dotted', 'Dashed'], inline = "D0", group = g_DWM))
+op_width           = input.int(2, "", inline = "D0", group = g_DWM)
+max_op             = input.int(1, "",1,100, tooltip ="Max opening price to show on chart",  inline = "D0", group = g_DWM)
+
+hl_style           = get_line_type(input.string(defval = 'Solid', title = "PHL Style ", options = ['Solid', 'Dotted', 'Dashed'], inline = "D0W", group = g_DWM))
+hl_width           = input.int(1, "", inline = "D0W", group = g_DWM)
+hl_bg           = input.bool(true, "", inline = "D0W", group = g_DWM,tooltip = "Show/hide background color")
+
+sep_style           = get_line_type(input.string(defval = 'Solid', title = "Div Style  ", options = ['Solid', 'Dotted', 'Dashed'], inline = "D0P", group = g_DWM))
+sep_width           = input.int(1, "", inline = "D0P", group = g_DWM)
+max_sep             = input.int(10, "",1,100, tooltip ="Max divider to show on chart",  inline = "D0P", group = g_DWM)
+
+
+
+show_prev_op       = input.bool(false, "Show Prev Open Price", group = g_DWM, tooltip = "Lines are limited to the amount of session drawn")
+
+show_pdshl           = input.bool(false, "Show Custom Days PHL   ", inline = "PDSHL", group = g_DWM)
+pdshl_count          = input.int(3, "",2,60, inline = "PDSHL", group = g_DWM)
+pdshl_color          = input.color(#388e3c, "", inline = "PDSHL", group = g_DWM)
+
+hide_pdshl_mit       = input.bool(true, "Hide Mitigated PHL      ", inline = "SM", group = g_DWM)
+pdshl_mit_count      = input.int(3, "",1,50,tooltip = "Max visible mitigated PHL", inline = "SM", group = g_DWM)
+
+
+
+
+
+var g_OPEN          = "Opening Prices"
+
+use_h1              = input.bool(true, "", inline = "H1", group = g_OPEN)
+h1_text             = input.string("Midnight Open", "", inline = "H1", group = g_OPEN)
+h1                  = input.session("0000-0001", "", inline = "H1", group = g_OPEN)
+h1_color            = input.color(#00bcd4, "", inline = "H1", group = g_OPEN)
+
+use_h2              = input.bool(true, "", inline = "H2", group = g_OPEN)
+h2_text             = input.string("NY AM Open", "", inline = "H2", group = g_OPEN)
+h2                  = input.session("0800-0830", "", inline = "H2", group = g_OPEN)
+h2_color            = input.color(#673ab7, "", inline = "H2", group = g_OPEN)
+
+use_h3              = input.bool(true, "", inline = "H3", group = g_OPEN)
+h3_text             = input.string("London Open", "", inline = "H3", group = g_OPEN)
+h3                  = input.session("0300-0500", "", inline = "H3", group = g_OPEN)
+h3_color            = input.color(#1848cc, "", inline = "H3", group = g_OPEN)
+
+use_h4              = input.bool(true, "", inline = "H4", group = g_OPEN)
+h4_text             = input.string("NY PM Open", "", inline = "H4", group = g_OPEN)
+h4                  = input.session("1330-1500", "", inline = "H4", group = g_OPEN)
+h4_color            = input.color(color.black, "", inline = "H4", group = g_OPEN)
+
+hz_style            = get_line_type(input.string(defval = 'Dashed', title = "Style", options = ['Solid', 'Dotted', 'Dashed'], inline = "H0", group = g_OPEN))
+hz_width            = input.int(1, "", inline = "H0", group = g_OPEN)
+use_cutoff          = input.bool(true, "Drawing Cutoff Time", inline = "C0", tooltip = "When enabled, all open price lines will stop extending at this time", group = g_OPEN)
+cutoff              = input.session("1600-1601", "", inline = "C0", group = g_OPEN)
+show_prev_op_2      = input.bool(false, "Show Prev Open Price",inline = "C0", group = g_OPEN, tooltip = "Lines are limited to the amount of session drawn")
+
+var g_VERTICAL      = "Silver Bullets Timestamps & Alert"
+use_v1              = input.bool(true, "", inline = "V1", group = g_VERTICAL)
+v1                  = input.session("0300-0400", "", inline = "V1", group = g_VERTICAL)
+v1_color            = input.color(color.new(#f23645, 50), "", inline = "V1", group = g_VERTICAL)
+v1_alert              = input.bool(false, "", inline = "V1", group = g_VERTICAL, tooltip = "1. Time Range \n2. Color \n3. Alert")
+
+use_v2              = input.bool(true, "", inline = "V2", group = g_VERTICAL)
+v2                  = input.session("1000-1100", "", inline = "V2", group = g_VERTICAL)
+v2_color            = input.color(color.new(#f23645, 50), "", inline = "V2", group = g_VERTICAL)
+v2_alert              = input.bool(false, "", inline = "V2", group = g_VERTICAL)
+
+use_v3              = input.bool(true, "", inline = "V3", group = g_VERTICAL)
+v3                  = input.session("1400-1500", "", inline = "V3", group = g_VERTICAL)
+v3_color            = input.color(color.new(#f23645, 50), "", inline = "V3", group = g_VERTICAL)
+v3_alert              = input.bool(false, "", inline = "V3", group = g_VERTICAL)
+
+vl_clear            = input.bool(true, "Remove when complete", inline = "V4", group = g_VERTICAL)
+vl_limit            = input.int(1, "", 1,inline = "V4", tooltip = "Max days", group = g_VERTICAL)
+
+vl_style            = get_line_type(input.string(defval = 'Dashed', title = "Style", options = ['Solid', 'Dotted', 'Dashed'], inline = "V0", group = g_VERTICAL))
+vl_width            = input.int(1, "",1,3, inline = "V0", group = g_VERTICAL)
+
+
+var q_VERTICAL      = "Intraday 90min Cycles - Quater Theory"
+use_lc              = input.bool(false, "London Session 90min Cycle", inline = "LC", group = q_VERTICAL)
+lc_color            = input.color(color.new(#2a2e39, 60), "", inline = "LC", group = q_VERTICAL)
+alert_lc_q1              = input.bool(false, "", inline = "LC", group = q_VERTICAL)
+alert_lc_q2              = input.bool(false, "", inline = "LC", group = q_VERTICAL)
+alert_lc_q3              = input.bool(false, "", inline = "LC", group = q_VERTICAL)
+alert_lc_q4              = input.bool(false, "", inline = "LC", group = q_VERTICAL,tooltip = "Alert at Q1, Q2, Q3, Q4")
+
+use_nyc             = input.bool(false, "NY Session 90min Cycle    ", inline = "NYC", group = q_VERTICAL)
+nyc_color           = input.color(color.new(#2a2e39, 60), "", inline = "NYC", group = q_VERTICAL)
+alert_ny_q1              = input.bool(false, "", inline = "NYC", group = q_VERTICAL)
+alert_ny_q2              = input.bool(false, "", inline = "NYC", group = q_VERTICAL)
+alert_ny_q3              = input.bool(false, "", inline = "NYC", group = q_VERTICAL)
+alert_ny_q4              = input.bool(false, "", inline = "NYC", group = q_VERTICAL,tooltip = "Alert at Q1, Q2, Q3, Q4")
+
+
+qt_clear            = input.bool(true, "Remove after Q4", inline = "QT2", group = q_VERTICAL)
+qt_max            = input.int(1, "",1,20, inline = "QT2", group = q_VERTICAL,tooltip = "Max days to draw on chart")
+
+qt_style            = get_line_type(input.string(defval = 'Solid', title = "Style", options = ['Solid', 'Dotted', 'Dashed'], inline = "QT", group = q_VERTICAL))
+qt_width            = input.int(1, "",1,2, inline = "QT", group = q_VERTICAL)
+
+
+// ---------------------------------------- iZZY MOD END--------------------------------------------------
+
+
+// ---------------------------------------- Inputs --------------------------------------------------
+
+
+// ---------------------------------------- Variables & Constants --------------------------------------------------
+type quater_cycles
+    string q1
+    string q2
+    string q3
+    string q4_s
+    string q4_e
+    line[] _line
+
+
+type kz
+    string _title
+
+    box[] _box
+
+    line[] _hi_line
+    line[] _md_line
+    line[] _lo_line
+
+    label[] _hi_label
+    label[] _lo_label
+
+    bool[] _hi_valid
+    bool[] _md_valid
+    bool[] _lo_valid
+ 
+
+type hz
+    line[] LN
+    label[] LB
+    bool[] CO
+type mitigated
+    bool is_mit
+    int timestamp
+    int barIndex
+    string tf
+
+type dwm_hl
+    string tf
+    line[] hi_line
+    line[] lo_line
+    label[] hi_label
+    label[] lo_label
+    int originalSize
+    mitigated[] hit_h_line
+    mitigated[] hit_l_line
+
+type lines
+    line line = na
+    bool hit_line = false
+
+type dwm_info
+    string tf
+    int alert_timestamp = 0
+    float o = na
+    float h = na
+    float l = na
+    float ph = na
+    float pl = na
+
+var as_kz = kz.new(as_txt_kz, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_label(), array.new_label(), array.new_bool(), array.new_bool(), array.new_bool())
+var lo_kz = kz.new(lo_txt_kz, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_label(), array.new_label(), array.new_bool(), array.new_bool(), array.new_bool())
+var na_kz = kz.new(nyam_txt_kz, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_label(), array.new_label(), array.new_bool(), array.new_bool(), array.new_bool())
+var np_kz = kz.new(nypm_txt_kz, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_label(), array.new_label(), array.new_bool(), array.new_bool(), array.new_bool())
+
+var as_ss = kz.new(as_txt_ss, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_label(), array.new_label(), array.new_bool(), array.new_bool(), array.new_bool())
+var lo_ss = kz.new(lo_txt_ss, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_label(), array.new_label(), array.new_bool(), array.new_bool(), array.new_bool())
+var na_ss = kz.new(ny_txt_ss, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_label(), array.new_label(), array.new_bool(), array.new_bool(), array.new_bool())
+var nl_ss = kz.new(nl_txt_ss, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_label(), array.new_label(), array.new_bool(), array.new_bool(), array.new_bool())
+var np_ss = kz.new(np_txt_ss, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_label(), array.new_label(), array.new_bool(), array.new_bool(), array.new_bool())
+
+var london_cycle = quater_cycles.new("0000","0130","0300","0430","0600",array.new_line())
+var ny_cycle = quater_cycles.new("0600","0730","0900","1030","1200",array.new_line())
+t_l_c = not na(time("", "0000-0600", gmt_tz))
+t_ny_c = not na(time("", "0600-1200", gmt_tz))
+
+
+
+
+var hz_1 = hz.new(array.new_line(), array.new_label(), array.new_bool())
+var hz_2 = hz.new(array.new_line(), array.new_label(), array.new_bool())
+var hz_3 = hz.new(array.new_line(), array.new_label(), array.new_bool())
+var hz_4 = hz.new(array.new_line(), array.new_label(), array.new_bool())
+
+var d_hl = dwm_hl.new("D",array.new_line(), array.new_line(), array.new_label(), array.new_label(),0, array.new<mitigated>(),array.new<mitigated>())
+var w_hl = dwm_hl.new("W",array.new_line(), array.new_line(), array.new_label(), array.new_label(),0, array.new<mitigated>(),array.new<mitigated>())
+var m_hl = dwm_hl.new("M",array.new_line(), array.new_line(), array.new_label(), array.new_label(),0,array.new<mitigated>(),array.new<mitigated>())
+var y_hl = dwm_hl.new("12M",array.new_line(), array.new_line(), array.new_label(), array.new_label(),0,array.new<mitigated>(),array.new<mitigated>())
+var px_hl = dwm_hl.new("",array.new_line(), array.new_line(), array.new_label(), array.new_label(),0,array.new<mitigated>(),array.new<mitigated>())
+var used_h = array.new_float()
+var used_l = array.new_float()
+var d_info = dwm_info.new("D")
+var w_info = dwm_info.new("W")
+var m_info = dwm_info.new("M")
+var y_info = dwm_info.new("12M")
+var px_info = dwm_info.new(str.tostring(pdshl_count)+"D")
+
+
+t_as_kz = not na(time("", asia_kz, gmt_tz))
+t_lo_kz = not na(time("", london_kz, gmt_tz))
+t_na_kz = not na(time("", nyam_kz, gmt_tz))
+t_np_kz = not na(time("", nypm_kz, gmt_tz))
+
+t_as_ss = not na(time("", asia_session, gmt_tz))
+t_lo_ss = not na(time("", london_session, gmt_tz))
+t_na_ss = not na(time("", ny_session, gmt_tz))
+t_nl_ss = not na(time("", nylu_session, gmt_tz))
+t_np_ss = not na(time("", nypm_session, gmt_tz))
+
+t_co = not na(time("", cutoff, gmt_tz))
+t_co_kz = not na(time("", cutoff_kz, gmt_tz))
+
+t_h1 = not na(time("", h1, gmt_tz))
+t_h2 = not na(time("", h2, gmt_tz))
+t_h3 = not na(time("", h3, gmt_tz))
+t_h4 = not na(time("", h4, gmt_tz))
+
+t_v1 = not na(time("", v1, gmt_tz))
+t_v2 = not na(time("", v2, gmt_tz))
+t_v3 = not na(time("", v3, gmt_tz))
+
+var d_sep_line = array.new_line()
+var w_sep_line = array.new_line()
+var m_sep_line = array.new_line()
+var y_sep_line = array.new_line()
+var m3_sep_line = array.new_line()
+
+var d_line = array.new_line()
+var w_line = array.new_line()
+var m_line = array.new_line()
+var y_line = array.new_line()
+var m3_line = array.new_line()
+
+var d_label = array.new_label()
+var w_label = array.new_label()
+var m_label = array.new_label()
+var y_label = array.new_label()
+var m3_label = array.new_label()
+
+var v1_line = array.new_line()
+var v2_line = array.new_line()
+var v3_line = array.new_line()
+
+var transparent = #ffffff00
+var ext_current = ext_which == 'Most Recent'
+var ext_past = ext_pivots == 'Past Mitigation'
+
+update_dwm_info(dwm_info n) =>
+    if timeframe.change(n.tf)
+        n.ph := n.h
+        n.pl := n.l
+        n.o := open
+        n.h := high
+        n.l := low
+    else
+        n.h := math.max(high, n.h)
+        n.l := math.min(low,  n.l)
+
+
+
+if dhl or show_d_open
+    update_dwm_info(d_info)
+if whl or show_w_open
+    update_dwm_info(w_info)
+if mhl or show_m_open
+    update_dwm_info(m_info)
+if yhl or show_y_open
+    update_dwm_info(y_info)
+if show_pdshl
+    update_dwm_info(px_info)   
+
+// ---------------------------------------- Variables & Constants --------------------------------------------------
+
+
+// ---------------------------------------- Functions --------------------------------------------------
+get_color(color c,  int trans) =>
+    result = color.new(c, trans)
+
+is_mitigated(mitigated mit) => 
+    if not na(mit)
+        mit.is_mit
+    else
+        false
+
+get_mitigation_time(mitigated mit) => 
+    if is_mitigated(mit)
+        mit.timestamp
+    else 
+        0
+ 
+// ---------------------------------------- Functions --------------------------------------------------
+
+
+// ---------------------------------------- Core Logic --------------------------------------------------
+dwm_sep(string tf, bool use, line[] arr, color col) =>
+    if use 
+        if timeframe.change(tf)
+            arr.unshift(line.new(bar_index, high*1.0001, bar_index, low, style = sep_style, width = sep_width, extend = extend.both, color = col))
+            if arr.size() > max_sep
+                arr.pop().delete()
+                
+
+dwm_open(string tf, bool use, line[] lns, label[] lbls, dwm_info n, color col) =>
+    if use
+        if timeframe.change(tf)
+            lns.unshift(line.new(time, n.o, time, n.o, xloc = xloc.bar_time, style = op_style, width = op_width, color = col))
+            lbls.unshift(label.new(time, n.o, tf + " OPEN", xloc = xloc.bar_time, style = label.style_label_left, color = transparent, textcolor = col, size = lbl_size))
+            if  (not show_prev_op and lns.size() > max_op) or (show_d_open and lns.size() > max_days)
+                lns.pop().delete()
+                lbls.pop().delete()
+        else if lns.size() > 0
+            lns.get(0).set_x2(time)
+            lbls.get(0).set_x(time)
+// Calculate the difference in seconds between the timestamps
+// time_difference_seconds = abs(timestamp1 - timestamp2)
+// Convert the difference to hours
+// time_difference_hours = time_difference_seconds / 3600 // 3600 seconds in an hour
+// Check if the difference is greater than 1 hour
+        if use_op_alerts and lns.size() > 0 
+            if n.alert_timestamp == 0 or (math.abs(time - n.alert_timestamp) / 3600) >= 1
+                line_value = lns.get(0).get_y1()
+                price_crosses_line_up = high[1] < line_value and high >= line_value
+                price_crosses_line_down = low[1] > line_value and low <= line_value
+                if price_crosses_line_up or price_crosses_line_down
+                    alert("Price hit "+tf+" Opening Price")
+                    n.alert_timestamp := time
+
+getDayHL(int days, bool h,string tf = "D") => 
+    request.security(syminfo.tickerid, tf, h? high[days] : low[days])
+ 
+     
+method check_lines_hit(bool hl, line ph_line,label ph_label,mitigated hit_line, string tf,color col, dwm_info custom_info) =>
+    bool hit = hit_line.is_mit
+    string txt = hl?" High":" Low"
+    string _tf = str.replace(tf,"12M","Y")
+    bool first_hit = hl? ((na(custom_info) ? high >= ph_line.get_y1() : custom_info.ph > ph_line.get_y1()) and not hit) : ((na(custom_info) ? low <= ph_line.get_y1() : custom_info.pl < ph_line.get_y1()) and not hit)
+    ph_label.set_text(not hit? "P"+_tf+txt+" ✔" : "P"+_tf+txt+" ✖")
+    if not hit and na(custom_info)
+        ph_line.set_x2(time)
+        ph_label.set_x(time)
+    
+    ph_label.set_size(hit and hl_bg == false?size.tiny:lbl_size)
+    if first_hit
+        hit_line.is_mit := true
+        hit_line.timestamp := time
+        hit_line.tf := tf
+        color cl = color.new(col,40)
+        ph_line.set_color(cl)
+        ph_label.set_color(hl_bg? cl : transparent)  
+        ph_label.set_textcolor(hl_bg? color.white : cl) 
+        ph_label.set_text("P"+_tf+txt+" ✖")
+        if use_hl_alerts
+            alert("Previous "+_tf+txt+" Broken 🔥🔥", alert.freq_once_per_bar)
+        
+   
+ 
+max_mit_count(string tf) => 
+    if(tf=="D")
+        pdshl_mit_count
+    else if(tf=="W")
+        pdshl_mit_count * 5
+    else if(tf=="M")
+        pdshl_mit_count * 20
+    else if(tf=="12M")
+        pdshl_mit_count * 240
+    else 
+        pdshl_mit_count
+ 
+manage_hit_lines(bool hl, array<line> lines,array<label> labels,array<mitigated> hit_lines, string tf, color col, int originalSize) => 
+    
+    if array.size(lines) > 0
+        int i = 0
+        
+        while i <= (array.size(lines)-1)
+            line _line = array.get(lines, i)
+            label _label = array.get(labels, i)
+            mitigated _hit_line = array.get(hit_lines, i)
+            int index = originalSize - _hit_line.barIndex
+            string txt = i == 0 ? tf : str.tostring(index) + tf
+            
+            check_lines_hit(hl, _line, _label, _hit_line, txt, col, na)
+            
+            if hide_pdshl_mit  // start_date + days_to_check * 86400000 milliseconds in a day
+                if _hit_line.is_mit and time >= _hit_line.timestamp + max_mit_count(tf) * 86400000
+                    _line.delete()
+                    _label.delete()
+                    array.remove(lines, i)
+                    array.remove(labels, i)
+                    array.remove(hit_lines, i)
+                    i := i - 1 // Update size after removal
+            i := i + 1
+
+         
+remove_duplicate_lines(dwm_hl current_hl,dwm_hl prev_hl) =>
+    if current_hl.tf != prev_hl.tf
+        if(current_hl.hi_line.size()>0)
+            line[] prev_lines = prev_hl.hi_line
+            for [index, _line_h] in current_hl.hi_line
+                for [prev_index, prev_line] in prev_lines
+                   
+                    if prev_line.get_y1() == _line_h.get_y1() and not str.startswith(current_hl.hi_label.get(index).get_text(),"PD")
+                        current_hl.hi_line.get(index).delete()
+                        current_hl.hi_label.get(index).delete()
+                        current_hl.hi_line.remove(index)
+                        current_hl.hi_label.remove(index)
+                        current_hl.hit_h_line.remove(index)
+                        break
+        
+        if(current_hl.lo_line.size()>0)
+            line[] prev_lines = prev_hl.lo_line
+            for [index, _line_l] in current_hl.lo_line
+                for [prev_index, prev_line] in prev_lines
+                    if prev_line.get_y1() == _line_l.get_y1() and not str.startswith(current_hl.lo_label.get(index).get_text(),"PD")
+                        current_hl.lo_line.get(index).delete()
+                        current_hl.lo_label.get(index).delete()
+                        current_hl.lo_line.remove(index)
+                        current_hl.lo_label.remove(index)
+                        current_hl.hit_l_line.remove(index)
+                        break
+            
+    
+    
+  
+dwm_hl(string tf, bool use, dwm_hl hl,dwm_hl prev_hl, dwm_info n, color col, int max_draw,string hl_tf_limit) =>
+     
+    if use and timeframe.in_seconds("") <= timeframe.in_seconds(hl_tf_limit)
+        if timeframe.change(tf)
+            hl.hi_line.unshift(line.new(time, n.ph, time, n.ph, xloc = xloc.bar_time, style = hl_style, width = hl_width, color = col))
+            hl.hi_label.unshift(label.new(time, n.ph, "P"+tf+" High ✔", xloc = xloc.bar_time, style = label.style_label_left, color = hl_bg? col : transparent, textcolor = hl_bg? color.white : col, size = lbl_size))
+            hl.hit_h_line.unshift(mitigated.new(false,0,hl.originalSize,tf))
+        
+
+            hl.lo_line.unshift(line.new(time, n.pl, time, n.pl, xloc = xloc.bar_time, style = hl_style, width = hl_width, color = col))
+            hl.lo_label.unshift(label.new(time, n.pl, "P"+tf+" Low ✔", xloc = xloc.bar_time, style = label.style_label_left, color = hl_bg? col : transparent, textcolor = hl_bg? color.white : col, size = lbl_size))
+            hl.hit_l_line.unshift(mitigated.new(false,0,hl.originalSize,tf))
+
+        
+            hl.originalSize := hl.originalSize + 1
+            if hl.hi_line.size() > max_draw
+                hl.hit_h_line.pop()
+                hl.hit_l_line.pop()
+                hl.hi_line.pop().delete()
+                hl.lo_line.pop().delete()
+                hl.hi_label.pop().delete()
+                hl.lo_label.pop().delete()
+                
+               
+        else if hl.hi_line.size() > 0 or hl.lo_line.size() > 0
+            if hl.hi_line.size() > 0
+                hl.hi_line.get(0).set_x2(time)
+                hl.hi_label.get(0).set_x(time)
+
+            if hl.lo_line.size() > 0
+                hl.lo_line.get(0).set_x2(time)
+                hl.lo_label.get(0).set_x(time)
+    
+        remove_duplicate_lines(hl,prev_hl)
+        manage_hit_lines(true,hl.hi_line,hl.hi_label,hl.hit_h_line,tf,col,hl.originalSize)
+        manage_hit_lines(false,hl.lo_line,hl.lo_label,hl.hit_l_line,tf,col,hl.originalSize)
+        
+
+    
+
+
+ 
+
+pxhl() =>
+    
+    if show_pdshl and timeframe.in_seconds("") <= timeframe.in_seconds(dhl_tf_limit)
+         // Get high and low values from x days ago
+        high_xdays_ago = getDayHL(pdshl_count,true)
+        low_xdays_ago = getDayHL(pdshl_count,false)
+        px_hl.hi_line.unshift(line.new(bar_index[pdshl_count], high_xdays_ago, bar_index, high_xdays_ago,style = hl_style, color=pdshl_color, width=hl_width, extend = extend.left))
+        px_hl.lo_line.unshift(line.new(bar_index[pdshl_count], low_xdays_ago, bar_index, low_xdays_ago,style = hl_style, color=pdshl_color, width=hl_width, extend = extend.left))
+        px_hl.hi_label.unshift(label.new(x=bar_index[pdshl_count], y=high_xdays_ago, text= "P"+px_info.tf+" High ✔", style = label.style_label_left, color = pdshl_color, textcolor = color.white, size = lbl_size))
+        px_hl.lo_label.unshift(label.new(x=bar_index[pdshl_count], y=low_xdays_ago, text= "P"+px_info.tf+" Low ✔", style = label.style_label_left, color = pdshl_color, textcolor = color.white, size = lbl_size))
+        px_hl.hit_h_line.unshift(mitigated.new(false,0,0,px_info.tf))
+        px_hl.hit_l_line.unshift(mitigated.new(false,0,0,px_info.tf))
+            
+        if px_hl.hi_line.size() > 1
+            px_hl.hi_line.pop().delete()
+            px_hl.lo_line.pop().delete()
+            px_hl.hi_label.pop().delete()
+            px_hl.lo_label.pop().delete()
+            px_hl.hit_h_line.pop()
+            px_hl.hit_l_line.pop()
+            
+    if px_hl.hi_line.size() > 0
+        check_lines_hit(true,px_hl.hi_line.get(0),px_hl.hi_label.get(0),px_hl.hit_h_line.get(0),px_info.tf,pdshl_color,px_info)
+        check_lines_hit(false,px_hl.lo_line.get(0),px_hl.lo_label.get(0),px_hl.hit_l_line.get(0),px_info.tf,pdshl_color,px_info)
+  
+
+    
+
+
+
+
+dwm_hls(bool use = true) =>
+    if use
+        dwm_hl("12M", yhl, y_hl,y_hl, y_info, y_color,max_y_hl,yhl_tf_limit)
+        dwm_hl("M", mhl, m_hl,y_hl, m_info, m_color,max_m_hl,mhl_tf_limit)
+        dwm_hl("W", whl, w_hl,m_hl, w_info, w_color,max_w_hl,whl_tf_limit)
+        dwm_hl("D", dhl, d_hl,w_hl, d_info, d_color,max_d_hl,dhl_tf_limit)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+
+       
+
+dwm() => 
+    if timeframe.in_seconds("") <= timeframe.in_seconds(tf_limit)
+        // DWM - Separators
+        dwm_sep("D", ds, d_sep_line, d_color)
+        dwm_sep("W", ws, w_sep_line, w_color)
+        dwm_sep("M", ms, m_sep_line, m_color)
+        dwm_sep("12M", ys, y_sep_line, y_color)
+        
+        
+        // DWM - Open Lines
+        dwm_open("12M", show_y_open, y_line, y_label, y_info, y_color)
+        dwm_open("M", show_m_open, m_line, m_label, m_info, m_color)
+        dwm_open("W", show_w_open, w_line, w_label, w_info, w_color)
+        dwm_open("D", show_d_open, d_line, d_label, d_info, d_color)
+        
+        
+        
+
+
+        // DWM - Highs and Lows
+    dwm_hls()
+    pxhl()
+
+    
+vline(bool use, bool t, line[] arr, color col, bool alert,bool start) =>
+    if use
+        if start and t and not t[1] or not start and not t and t[1]
+            arr.unshift(line.new(bar_index, high*1.0001, bar_index, low, style = vl_style, width = vl_width, extend = extend.both, color = col))
+            if alert
+                alert(start? "SB session started" : "SB session ended", alert.freq_once_per_bar)
+            if arr.size()/2 > vl_limit
+                arr.pop().delete()
+        if(vl_clear and arr.size()>0 and not start and not t and not t[1])
+            for i = arr.size()-1 to 0
+                array.remove(arr,i).delete()
+            
+vlines() =>
+    
+    if timeframe.in_seconds("") <= timeframe.in_seconds(tf_limit)
+        vline(use_v1, t_v1, v1_line, v1_color,v1_alert,true)
+        vline(use_v1, t_v1, v1_line, v1_color,v1_alert,false)
+
+        vline(use_v2, t_v2, v2_line, v2_color,v2_alert,true)
+        vline(use_v2, t_v2, v2_line, v2_color,v2_alert,false)
+
+        vline(use_v3, t_v3, v3_line, v3_color,v3_alert,true)
+        vline(use_v3, t_v3, v3_line, v3_color,v3_alert,false)
+         
+ 
+
+get_target_time(_time) =>
+    int _hour = math.round(str.tonumber(str.substring(_time,0,2)))
+    int _minute = math.round(str.tonumber(str.substring(_time,2,4)))
+    timestamp(gmt_tz,year, month, dayofmonth, _hour,_minute)
+
+// Function to plot a vertical line at a specific time
+plot_line_at_time(int target_time,string label_text, quater_cycles qc, color _color) => 
+    // Check if the target time is either in the future or already reached
+    // using (time[1] - time[2] to calculate the timeframe
+    bar_offset = (target_time - time) / (time[1] - time[2])
+    qc._line.unshift(line.new(bar_index + bar_offset, close, bar_index + bar_offset, close, xloc=xloc.bar_index, color=_color, width=qt_width, style=qt_style, extend=extend.both))
+    // qc._label.unshift(label.new(bar_index + bar_offset, low-10, label_text, xloc=xloc.bar_index, color=color.blue, textalign=text.align_center, style=label.style_label_down, size=size.small, textcolor=color.blue))
+    
+
+qc_vline(bool use, quater_cycles cycle,bool in_range,color _color,bool alert_q1,bool alert_q2,bool alert_q3,bool alert_q4) =>
+    if use and timeframe.in_seconds("") <= timeframe.in_seconds("30")
+        max_line_per_cycle = 5
+        q1 = get_target_time(cycle.q1)
+        q2 = get_target_time(cycle.q2)
+        q3 = get_target_time(cycle.q3)
+        q4 = get_target_time(cycle.q4_s)
+        if in_range and not in_range[1]
+            plot_line_at_time(q1,"q1",cycle,_color)
+            plot_line_at_time(q2,"q2",cycle,_color)
+            plot_line_at_time(q3,"q3",cycle,_color)
+            plot_line_at_time(q4,"q4",cycle,_color)
+            plot_line_at_time(get_target_time(cycle.q4_e),"",cycle,_color)
+        else if qt_clear and not in_range and in_range[1]
+            for i = 1 to max_line_per_cycle by 1
+                cycle._line.pop().delete()
+        else 
+            if(time == q1 and alert_q1)
+                alert("Q1 started", alert.freq_once_per_bar)
+            else if(time == q2 and alert_q2)
+                alert("Q2 started", alert.freq_once_per_bar)
+            else if(time == q3 and alert_q3)
+                alert("Q3 started", alert.freq_once_per_bar)
+            else if(time == q4 and alert_q4)
+                alert("Q4 started", alert.freq_once_per_bar)
+
+        if(cycle._line.size()/max_line_per_cycle > qt_max)
+            for i = 1 to max_line_per_cycle by 1
+                cycle._line.pop().delete()
+                    // cycle._label.pop().delete()
+            
+
+qc_vline(use_lc, london_cycle,t_l_c,lc_color,alert_lc_q1,alert_lc_q2,alert_lc_q3,alert_lc_q4)
+qc_vline(use_nyc, ny_cycle,t_ny_c,nyc_color,alert_ny_q1,alert_ny_q2,alert_ny_q3,alert_ny_q4)
+
+
+hz_line(bool use, bool t, hz hz, string txt, color col) =>
+    if use
+        if t and not t[1]
+            hz.LN.unshift(line.new(bar_index, open, bar_index, open, style = hz_style, width = hz_width, color = col))
+            hz.LB.unshift(label.new(bar_index, open, txt, style = label.style_label_left, color = transparent, textcolor = col, size = lbl_size))
+            array.unshift(hz.CO, false)
+            if (not show_prev_op_2 and hz.LN.size() > 1) or (hz.LN.size() > max_days)
+                hz.LN.pop().delete()
+                hz.LB.pop().delete()
+                hz.CO.pop()
+
+        if not t and hz.CO.size() > 0
+            if not hz.CO.get(0)
+                hz.LN.get(0).set_x2(bar_index)
+                hz.LB.get(0).set_x(bar_index)
+                if (use_cutoff ? t_co : false)
+                    hz.CO.set(0, true)
+
+
+hz_lines() =>
+    if timeframe.in_seconds("") <= timeframe.in_seconds(tf_limit)
+        hz_line(use_h1, t_h1, hz_1, h1_text, h1_color)
+        hz_line(use_h2, t_h2, hz_2, h2_text, h2_color)
+        hz_line(use_h3, t_h3, hz_3, h3_text, h3_color)
+        hz_line(use_h4, t_h4, hz_4, h4_text, h4_color)
+
+
+del_kz(kz k) =>
+    if k._box.size() > max_days
+        k._box.pop().delete()
+    if k._hi_line.size() > max_days
+        k._hi_line.pop().delete()
+        k._lo_line.pop().delete()
+        k._hi_valid.pop()
+        k._lo_valid.pop()
+        if show_midpoints
+            k._md_line.pop().delete()
+            k._md_valid.pop()
+    if k._hi_label.size() > max_days
+        k._hi_label.pop().delete()
+        k._lo_label.pop().delete()
+    
+
+adjust_in_kz(kz kz, bool t) =>
+    if t
+        kz._box.get(0).set_right(time)
+        kz._box.get(0).set_top(math.max(kz._box.get(0).get_top(), high))
+        kz._box.get(0).set_bottom(math.min(kz._box.get(0).get_bottom(), low))
+ 
+
+        if show_pivots and kz._hi_line.size() > 0
+            if high > kz._hi_line.get(0).get_y1()
+                kz._hi_line.get(0).set_xy1(time, high)
+                kz._hi_line.get(0).set_xy2(time, high)
+
+            if low < kz._lo_line.get(0).get_y1()
+                kz._lo_line.get(0).set_xy1(time, low)
+                kz._lo_line.get(0).set_xy2(time, low)
+                
+            if show_midpoints
+                kz._md_line.get(0).set_xy1(time, math.avg(kz._hi_line.get(0).get_y2(), kz._lo_line.get(0).get_y2()))
+                kz._md_line.get(0).set_xy2(time, math.avg(kz._hi_line.get(0).get_y2(), kz._lo_line.get(0).get_y2()))
+
+     
+    
+
+adjust_out_kz(kz kz, bool t) =>
+    
+    if kz._box.size() > 0 and show_pivots
+        for i = 0 to kz._box.size() - 1
+            if not ext_current or (ext_current and i == 0)
+                if ext_past ? true : (kz._hi_valid.get(i) == true)
+                    kz._hi_line.get(i).set_x2(time)
+                if high > kz._hi_line.get(i).get_y1() and kz._hi_valid.get(i) == true
+                    if use_alerts and i == 0
+                        alert("Broke "+kz._title+" High", alert.freq_once_per_bar)
+                    kz._hi_valid.set(i, false)
+                else if (use_cutoff_kz ? t_co_kz : false)
+                    kz._hi_valid.set(i, false)
+                    
+                if ext_past ? true : (kz._lo_valid.get(i) == true)
+                    kz._lo_line.get(i).set_x2(time)
+                if low < kz._lo_line.get(i).get_y1() and kz._lo_valid.get(i) == true
+                    if use_alerts and i == 0
+                        alert("Broke "+kz._title+" Low", alert.freq_once_per_bar)
+                    kz._lo_valid.set(i, false)
+                else if (use_cutoff_kz ? t_co_kz : false)
+                    kz._lo_valid.set(i, false)
+                    
+                if show_midpoints
+                    kz._md_line.get(i).set_x2(time)
+            else
+                break
+
+
+manage_kz(kz kz, bool use, bool t, color c, string box_txt,bool showBx,bool showTx, bool session) => 
+    if timeframe.in_seconds("") <= timeframe.in_seconds(tf_limit) and use
+        if t and not t[1]
+            _c = get_color(c,session ? box_transparency_ss : box_transparency_kz)
+            _t = get_color(c,session ? text_transparency_ss : text_transparency_kz)
+            kz._box.unshift(box.new(time, high, time, low, xloc = xloc.bar_time, border_color = showBx and session ? na : showBx ? _c : na, bgcolor = showBx ? _c : na, text = (showBx and showTx) ? box_txt : na, text_color = _t))
+
+            if show_pivots
+                kz._hi_line.unshift(line.new(time, high, time, high, xloc = xloc.bar_time, style = kzp_style, color =session ? transparent : c, width = kzp_width))
+                kz._lo_line.unshift(line.new(time, low, time, low, xloc = xloc.bar_time, style = kzp_style, color =session ? transparent : c, width = kzp_width))
+                if show_midpoints
+                    kz._md_line.unshift(line.new(time, math.avg(high, low), time, math.avg(high, low), xloc = xloc.bar_time, style = kzm_style, color = c, width = kzm_width))
+                    array.unshift(kz._md_valid, true)
+                
+                array.unshift(kz._hi_valid, true)
+                array.unshift(kz._lo_valid, true) 
+            
+            del_kz(kz)
+        adjust_in_kz(kz, t)
+    adjust_out_kz(kz, t)
+         
+
+
+manage_kz(as_kz, use_asia_kz, t_as_kz, as_color_kz, as_txt_kz,show_kz,show_kz_text,false)
+manage_kz(lo_kz, use_london_kz, t_lo_kz, lo_color_kz, lo_txt_kz,show_kz,show_kz_text,false)
+manage_kz(na_kz, use_nyam_kz, t_na_kz, nyam_color_kz, nyam_txt_kz,show_kz,show_kz_text,false)
+manage_kz(np_kz, use_nypm_kz, t_np_kz, nypm_color_kz, nypm_txt_kz,show_kz,show_kz_text,false)
+
+manage_kz(as_ss, use_asia_ss,t_as_ss, as_color_ss, as_txt_ss,show_ss,show_ss_text,true)
+manage_kz(lo_ss, use_london_ss,t_lo_ss, lo_color_ss, lo_txt_ss,show_ss,show_ss_text,true)
+manage_kz(na_ss, use_ny_ss,t_na_ss, na_color_ss, ny_txt_ss,show_ss,show_ss_text,true)
+manage_kz(nl_ss, use_nylu_ss, t_nl_ss, nl_color_ss, nl_txt_ss,show_ss,show_ss_text,true)
+manage_kz(np_ss, use_nypm_ss, t_np_ss, np_color_ss, np_txt_ss,show_ss,show_ss_text,true)
+
+dwm() 
+vlines()
+hz_lines()
+
+
+// ---------------------------------------- Core Logic --------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+// ---------------------------------------- HTF Imbalance Logic --------------------------------------------------
+//+------------------------------------------------------------------------------------------------------------+//
+//+--- Types                                                                                                ---+//
+//+------------------------------------------------------------------------------------------------------------+//
+type Settings 
+    bool    CE_show
+    string  CE_style
+    color   CE_color
+    string  CE_limit
+    bool    Border_show
+    string  mitigated_type
+    color   mitigated_color_bull
+    color   mitigated_color_bear
+    bool    ltf_hide
+    bool    ctf_show
+    bool    label_show
+    string    fvg_style
+    int    fvg_width
+    bool    show_fvg_border
+    string    ifvg_style
+    int    ifvg_width
+    bool    show_ifvg_border
+    // bool    label_show_bg
+    color   label_color
+    color   label_bgcolor
+    string  label_size
+    string  label_limit
+    int     padding
+    int     buffer
+
+type Imbalance_Settings
+    bool    show
+    string  htf
+    color   col
+    color   mit_col
+    bool    alert
+    bool    mitigated_show
+    int     max_count
+    bool    show_inverse_imb
+
+type Imbalance
+    int     open_time
+    int     close_time
+    float   open
+    float   middle
+    float   close
+    bool  ifvg
+    bool invalid_ifvg
+    mitigated mit 
+    line    line_middle
+    bool    alerted
+    bool    alerted_ce
+    label   lbl
+    box     box
+
+type ImbalanceStructure
+    Imbalance[]         imbalance
+    Imbalance_Settings  settings
+
+type Helper
+    string name         = "Helper"
+    string bullish_arrow = "▲"
+    string bearish_arrow = "▼"
+
+ 
+//+------------------------------------------------------------------------------------------------------------+//
+//+--- Settings                                                                                             ---+//
+//+------------------------------------------------------------------------------------------------------------+//
+
+
+
+Settings settings                   = Settings.new()
+Imbalance_Settings HTF_1_Settings   = Imbalance_Settings.new()
+Imbalance_Settings HTF_2_Settings   = Imbalance_Settings.new()
+Imbalance_Settings HTF_3_Settings   = Imbalance_Settings.new()
+Imbalance_Settings HTF_4_Settings   = Imbalance_Settings.new()
+Imbalance_Settings HTF_5_Settings   = Imbalance_Settings.new()
+Imbalance_Settings HTF_6_Settings   = Imbalance_Settings.new()
+Imbalance_Settings HTF_7_Settings   = Imbalance_Settings.new()
+
+string tooltip1 = "HTF FVG Settings:\n\t1. Show/Hide timeframe\n\t2. Timeframe to display\n\t3. FVG Color\n\t4. FVG Mitigate Color\n\t5. Max number of FVGs to display\n\t6. Alert When hit FVG or FVG C.E\n\t7. Show Mitigated\n\t8. Show IFVGs\n\tNote:\n\tIf price close through FVG, it becomes IFVG\n\tIf price close through IFVG, it gets deleted"
+
+var g_Imbalance      = "HTF Imbalance (FVG + IFVG)"
+HTF_1_Settings.show         := input.bool(true, "", inline="htf1", group = g_Imbalance)
+htf_1                        = input.timeframe("5", "", inline="htf1", group = g_Imbalance)
+HTF_1_Settings.htf          := htf_1
+HTF_1_Settings.col          := input.color(color.new(color.gray,90), "", inline="htf1", group = g_Imbalance)
+HTF_1_Settings.mit_col      := input.color(color.new(color.gray,95), "", inline="htf1", group = g_Imbalance)
+HTF_1_Settings.max_count    := input.int(10, "", inline="htf1", group = g_Imbalance)
+HTF_1_Settings.alert        := input.bool(false, "", inline="htf1", group = g_Imbalance)
+HTF_1_Settings.mitigated_show  := input.bool(false, "", inline="htf1", group = g_Imbalance)
+HTF_1_Settings.show_inverse_imb  := input.bool(true, "", inline="htf1",tooltip = tooltip1, group = g_Imbalance)
+
+HTF_2_Settings.show         := input.bool(true, "", inline="htf2", group = g_Imbalance)
+htf_2                        = input.timeframe("15", "", inline="htf2", group = g_Imbalance)
+HTF_2_Settings.htf          := htf_2
+HTF_2_Settings.col          := input.color(color.new(#c86e32,90), "", inline="htf2", group = g_Imbalance)
+HTF_2_Settings.mit_col      := input.color(color.new(#c86e32,95), "", inline="htf2", group = g_Imbalance)
+HTF_2_Settings.max_count    := input.int(10, "", inline="htf2", group = g_Imbalance)
+HTF_2_Settings.alert        := input.bool(false, "", inline="htf2", group = g_Imbalance)
+HTF_2_Settings.mitigated_show  := input.bool(false, "", inline="htf2", group = g_Imbalance)
+HTF_2_Settings.show_inverse_imb  := input.bool(true, "", inline="htf2",tooltip = tooltip1, group = g_Imbalance)
+
+HTF_3_Settings.show         := input.bool(true, "", inline="htf3", group = g_Imbalance)
+htf_3                        = input.timeframe("60", "", inline="htf3", group = g_Imbalance)
+HTF_3_Settings.htf          := htf_3
+HTF_3_Settings.col   := input.color(color.new(#4caf50,90), "", inline="htf3", group = g_Imbalance)
+HTF_3_Settings.mit_col   := input.color(color.new(#4caf50,95), "", inline="htf3", group = g_Imbalance)
+HTF_3_Settings.max_count    := input.int(10, "", inline="htf3", group = g_Imbalance)
+HTF_3_Settings.alert        := input.bool(true, "", inline="htf3", group = g_Imbalance)
+HTF_3_Settings.mitigated_show  := input.bool(false, "", inline="htf3", group = g_Imbalance)
+HTF_3_Settings.show_inverse_imb  := input.bool(true, "", inline="htf3",tooltip = tooltip1, group = g_Imbalance)
+
+HTF_4_Settings.show         := input.bool(true, "", inline="htf4", group = g_Imbalance)
+htf_4                        = input.timeframe("240", "", inline="htf4", group = g_Imbalance)
+HTF_4_Settings.htf          := htf_4
+HTF_4_Settings.col   := input.color(color.new(#ffa726,90), "", inline="htf4", group = g_Imbalance)
+HTF_4_Settings.mit_col   := input.color(color.new(#ffa726,95), "", inline="htf4", group = g_Imbalance)
+HTF_4_Settings.max_count    := input.int(10, "", inline="htf4", group = g_Imbalance)
+HTF_4_Settings.alert        := input.bool(true, "", inline="htf4", group = g_Imbalance)
+HTF_4_Settings.mitigated_show  := input.bool(false, "", inline="htf4", group = g_Imbalance)
+HTF_4_Settings.show_inverse_imb  := input.bool(true, "", inline="htf4",tooltip = tooltip1, group = g_Imbalance)
+
+HTF_5_Settings.show         := input.bool(true, "", inline="htf5", group = g_Imbalance)
+htf_5                        = input.timeframe("1D", "", inline="htf5", group = g_Imbalance)
+HTF_5_Settings.htf          := htf_5
+HTF_5_Settings.col   := input.color(color.new(#1848cc,90), "", inline="htf5", group = g_Imbalance)
+HTF_5_Settings.mit_col   := input.color(color.new(#1848cc,95), "", inline="htf5", group = g_Imbalance)
+HTF_5_Settings.max_count    := input.int(5, "", inline="htf5", group = g_Imbalance)
+HTF_5_Settings.alert        := input.bool(true, "", inline="htf5", group = g_Imbalance)
+HTF_5_Settings.mitigated_show  := input.bool(false, "", inline="htf5", group = g_Imbalance)
+HTF_5_Settings.show_inverse_imb  := input.bool(true, "", inline="htf5",tooltip = tooltip1, group = g_Imbalance)
+
+HTF_6_Settings.show         := input.bool(true, "", inline="htf6", group = g_Imbalance)
+htf_6                        = input.timeframe("1W", "", inline="htf6", group = g_Imbalance)
+HTF_6_Settings.htf          := htf_6
+HTF_6_Settings.col   := input.color(color.new(#9c27b0,90), "", inline="htf6", group = g_Imbalance)
+HTF_6_Settings.mit_col   := input.color(color.new(#9c27b0,95), "", inline="htf6", group = g_Imbalance)
+HTF_6_Settings.max_count    := input.int(5, "", inline="htf6", group = g_Imbalance)
+HTF_6_Settings.alert        := input.bool(true, "", inline="htf6", group = g_Imbalance)
+HTF_6_Settings.mitigated_show  := input.bool(false, "", inline="htf6", group = g_Imbalance)
+HTF_6_Settings.show_inverse_imb  := input.bool(true, "", inline="htf6",tooltip = tooltip1, group = g_Imbalance)
+
+HTF_7_Settings.show         := input.bool(true, "", inline="htf7", group = g_Imbalance)
+htf_7                        = input.timeframe("1M", "", inline="htf7", group = g_Imbalance)
+HTF_7_Settings.htf          := htf_7
+HTF_7_Settings.col   := input.color(color.new(#f23645,90), "", inline="htf7", group = g_Imbalance)
+HTF_7_Settings.mit_col   := input.color(color.new(#f23645,95), "", inline="htf7", group = g_Imbalance)
+HTF_7_Settings.max_count    := input.int(5, "", inline="htf7", group = g_Imbalance)
+HTF_7_Settings.alert        := input.bool(true, "", inline="htf7", group = g_Imbalance)
+HTF_7_Settings.mitigated_show  := input.bool(false, "", inline="htf7", group = g_Imbalance)
+HTF_7_Settings.show_inverse_imb  := input.bool(true, "", inline="htf7",tooltip = tooltip1, group = g_Imbalance)
+
+
+
+Settings_Group                  = "Imbalance Settings"
+settings.ltf_hide               := input.bool(true, "Hide Lower Timeframes", inline = "3")
+settings.ctf_show               := input.bool(true, "Show Current Timeframe", inline = "3")
+
+settings.fvg_style               := get_line_type(input.string(defval = 'Solid', title = "FVG Style   ", options = ['Solid', 'Dotted', 'Dashed'], inline = "4", group = Settings_Group))
+settings.fvg_width               := input.int(1, "",minval = 1, maxval = 3, inline = "4", group = Settings_Group)
+settings.show_fvg_border        := input.bool(true, "", inline = "4", group=Settings_Group,tooltip = "1. Style\t\n2. Width \t\n3. Show border")
+
+settings.ifvg_style             := get_line_type(input.string(defval = 'Solid', title = "IFVG Style  ", options = ['Solid', 'Dotted', 'Dashed'], inline = "5", group = Settings_Group))
+settings.ifvg_width             := input.int(2, "",minval = 1, maxval = 3, inline = "5", group = Settings_Group)
+settings.show_ifvg_border       := input.bool(true, "", inline = "5", group=Settings_Group,tooltip = "1. Style\t\n2. Width \t\n3. Show border")
+ 
+settings.mitigated_type         := input.string('Wick filled half', 'Mark mitigated when', options = ['None', 'Wick filled', 'Body filled', 'Wick filled half', 'Body filled half'], group=Settings_Group, inline="2", tooltip = "Note that HTF cannot be marked mitigated on lower timeframe and stays visible until HTF confirms it, which is the right approach.")
+settings.CE_show                := input.bool(true, "Show C.E", group=Settings_Group, inline="3")
+settings.CE_color               := input.color(color.new(color.black,90), "", group=Settings_Group, inline="3")
+settings.CE_style               := input.string('----', '', options = ['⎯⎯⎯', '----', '····'], group=Settings_Group, inline="3")
+settings.CE_limit               := input.timeframe("5", "", tooltip = "Hide C.E lower than the timeframe", group=Settings_Group, inline="3")
+settings.label_show             := input.bool(true, "Show Label", inline="label")
+settings.label_size             := input.string(size.tiny, "", [size.tiny, size.small, size.normal, size.large, size.huge], inline="label")
+settings.label_limit            := input.timeframe("5", "", inline="label",tooltip = "Hide labels lower than the timeframe")
+settings.padding                := input.int(15, "Distance from current candle", minval=0)
+settings.buffer                 := input.int(15, "Spacing between timeframes", minval=0)
+
+//+------------------------------------------------------------------------------------------------------------+//
+//+--- Variables                                                                                            ---+//
+//+------------------------------------------------------------------------------------------------------------+//
+color color_transparent             = #ffffff00
+
+Helper helper                       = Helper.new()
+
+var ImbalanceStructure FVG_1        = ImbalanceStructure.new()
+var ImbalanceStructure FVG_2        = ImbalanceStructure.new()
+var ImbalanceStructure FVG_3        = ImbalanceStructure.new()
+var ImbalanceStructure FVG_4        = ImbalanceStructure.new()
+var ImbalanceStructure FVG_5        = ImbalanceStructure.new()
+var ImbalanceStructure FVG_6        = ImbalanceStructure.new()
+var ImbalanceStructure FVG_7        = ImbalanceStructure.new()
+
+var Imbalance[] FVGs_1              = array.new<Imbalance>()
+var Imbalance[] FVGs_2              = array.new<Imbalance>()
+var Imbalance[] FVGs_3              = array.new<Imbalance>()
+var Imbalance[] FVGs_4              = array.new<Imbalance>()
+var Imbalance[] FVGs_5              = array.new<Imbalance>()
+var Imbalance[] FVGs_6              = array.new<Imbalance>()
+var Imbalance[] FVGs_7              = array.new<Imbalance>()
+
+FVG_1.imbalance                     := FVGs_1
+FVG_1.settings                      := HTF_1_Settings
+FVG_2.imbalance                     := FVGs_2
+FVG_2.settings                      := HTF_2_Settings
+FVG_3.imbalance                     := FVGs_3
+FVG_3.settings                      := HTF_3_Settings
+FVG_4.imbalance                     := FVGs_4
+FVG_4.settings                      := HTF_4_Settings
+FVG_5.imbalance                     := FVGs_5
+FVG_5.settings                      := HTF_5_Settings
+FVG_6.imbalance                     := FVGs_6
+FVG_6.settings                      := HTF_6_Settings
+FVG_7.imbalance                     := FVGs_7
+FVG_7.settings                      := HTF_7_Settings
+
+//Used internally for padding
+var int TF_1        = 0
+var int TF_2        = 0
+var int TF_3        = 0
+var int TF_4        = 0
+var int TF_5        = 0
+var int TF_6        = 0
+var int TF_7        = 0
+
+var float daily     = 0
+var float monthly   = 0
+//+------------------------------------------------------------------------------------------------------------+//
+//+--- Methods                                                                                              ---+//
+//+------------------------------------------------------------------------------------------------------------+//
+method LineStyle(Helper helper, string style) =>
+    helper.name := style
+
+    out = switch style
+        '----' => line.style_dashed
+        '····' => line.style_dotted
+        => line.style_solid
+    
+    out
+
+method Gethtftext(Helper helper, string htf) =>
+    helper.name := htf
+
+    formatted = htf
+    seconds = timeframe.in_seconds(htf)
+
+    if seconds < 60
+        formatted := str.tostring(seconds) + "s"
+    else if (seconds / 60) < 60
+        formatted := str.tostring((seconds/60)) + "m"
+    else if (seconds/60/60) < 24
+        formatted := str.tostring((seconds/60/60)) + "H"
+    
+    formatted
+
+method Validtimeframe(Helper helper, tf, equal) =>
+    helper.name := tf
+    n1 = timeframe.in_seconds()
+    n2 = timeframe.in_seconds(tf)
+    if(equal and n1 == n2)
+        true
+    else
+        n1 < n2
+
+method ProximityRange(Helper helper, tf) =>
+    helper.name := tf
+    float range_high    = 0
+    float range_low   = 0
+    if timeframe.isseconds or timeframe.isminutes
+        range_high := close + daily
+        range_low  := close - daily
+    if timeframe.isdaily
+        range_high := close + monthly*3
+        range_low  := close - monthly*3
+    if timeframe.isweekly
+        range_high := close + monthly*12
+        range_low  := close - monthly*12
+
+    [range_low, range_high]
+
+//+------------------------------------------------------------------------------------------------------------+//
+//+--- Imbalances Methods                                                                                   ---+//
+//+------------------------------------------------------------------------------------------------------------+//
+
+
+method UpdateImbalance(ImbalanceStructure IS,Imbalance imb,int buffer, bool is_mit, bool ifvg,string txt_label)=>
+    
+    int mitigated_time = get_mitigation_time(imb.mit)
+    box.set_right(imb.box, is_mit ? mitigated_time : buffer)
+    box.set_bgcolor(imb.box, is_mit ? IS.settings.mit_col : IS.settings.col)
+    box.set_border_style(imb.box, ifvg and not is_mit? settings.ifvg_style : settings.fvg_style)
+
+    box.set_border_width(imb.box, ifvg? settings.show_ifvg_border ? settings.ifvg_width : 0 : settings.show_fvg_border? settings.fvg_width : 0)
+    box.set_border_color(imb.box, settings.show_fvg_border and not ifvg ? is_mit? IS.settings.col : color.new(IS.settings.col, color.t(IS.settings.col)/ 3) : IS.settings.col)
+    
+    if settings.label_show and timeframe.in_seconds(IS.settings.htf) >= timeframe.in_seconds(settings.label_limit)
+        label.set_x(imb.lbl, is_mit ? mitigated_time : buffer)
+        label.set_text(imb.lbl,IS.settings.show_inverse_imb and ifvg and not imb.invalid_ifvg? (imb.open < imb.close?helper.bearish_arrow:helper.bullish_arrow)+helper.Gethtftext(IS.settings.htf)+" IFVG" : txt_label)
+        label.set_textcolor(imb.lbl, color.new(IS.settings.col, color.t(IS.settings.col)/ 3))
+        // label.set_color(imb.lbl,settings.label_show_bg? is_mit? color_transparent :color.new(IS.settings.col, color.t(IS.settings.col)/ 3) : color_transparent)
+        //label.delete(imb.lbl)
+
+    if settings.CE_show and timeframe.in_seconds(IS.settings.htf) >= timeframe.in_seconds(settings.CE_limit)
+        line.set_x2(imb.line_middle, is_mit ? mitigated_time : buffer)
+        line.set_color(imb.line_middle,settings.CE_color)
+    bool clear = false
+    bool clear_mit = time > mitigated_time + timeframe.in_seconds(IS.settings.htf) * 1000 // To milliseconds
+    if is_mit
+        if IS.settings.show_inverse_imb and not IS.settings.mitigated_show
+            if not ifvg
+                clear := clear_mit
+            else if imb.invalid_ifvg
+                clear := true
+        else if not IS.settings.mitigated_show
+            clear := clear_mit
+
+        if clear
+            if not na(imb.box)
+                box.delete(imb.box)
+                line.delete(imb.line_middle)
+                label.delete(imb.lbl)
+ 
+    is_mit
+
+
+
+// AddZone is used to display and manage imbalance related boxes
+method AddZone(ImbalanceStructure IS, Imbalance imb, int step) =>
+    bool visible = true
+    if IS.settings.show
+        
+    
+        int buffer = time+((time-time[1])*(settings.padding+1+(settings.buffer*(step-1))))
+        string txt_label = (imb.open < imb.close?helper.bullish_arrow:helper.bearish_arrow)+helper.Gethtftext(IS.settings.htf)
+        bool is_mitigated = is_mitigated(imb.mit)
+        int mitigated_time = get_mitigation_time(imb.mit)
+        bool ifvg_invalid = IS.settings.show_inverse_imb and imb.ifvg and imb.invalid_ifvg
+        bool is_mit_or_ifvg_is_invalid = ifvg_invalid or (is_mitigated and not IS.settings.show_inverse_imb)
+        color imb_border_col = color.new(IS.settings.col, color.t(IS.settings.col)/ 3)
+        if na(imb.box)
+            imb.box := box.new(imb.open_time, imb.open, buffer, imb.close, settings.Border_show ? imb_border_col : color_transparent, settings.Border_show ? 2 : 0, bgcolor = IS.settings.col, xloc=xloc.bar_time)
+            if settings.label_show and timeframe.in_seconds(IS.settings.htf) >= timeframe.in_seconds(settings.label_limit)
+                imb.lbl := label.new(buffer, imb.middle, text=txt_label, xloc=xloc.bar_time, textcolor= imb_border_col, style=label.style_label_left,  color=color_transparent, size = settings.label_size)
+                // imb.lbl := label.new(buffer, imb.middle, text=txt_label, xloc=xloc.bar_time, textcolor=settings.label_color, style=label.style_label_left,  color= settings.label_show_bg? color.new(IS.settings.col, color.t(IS.settings.col)/ 3) : color_transparent, size = settings.label_size)
+            if settings.CE_show and timeframe.in_seconds(IS.settings.htf) >= timeframe.in_seconds(settings.CE_limit)
+                imb.line_middle := line.new(imb.open_time, imb.middle, buffer, imb.middle, xloc=xloc.bar_time, style=helper.LineStyle(settings.CE_style), color=settings.CE_color)
+        // else --- fix mitigate fvg from showing as fresh fvg
+        
+        if (IS.settings.show_inverse_imb and IS.settings.mitigated_show) or (IS.settings.show_inverse_imb and not IS.settings.mitigated_show)
+            if is_mitigated and not imb.ifvg
+                UpdateImbalance(IS,imb,buffer,true,false,txt_label)
+            else if imb.ifvg
+                UpdateImbalance(IS,imb,buffer,imb.invalid_ifvg,true,txt_label)
+            else 
+                UpdateImbalance(IS,imb,buffer,is_mitigated,false,txt_label)
+
+        else 
+            UpdateImbalance(IS,imb,buffer,is_mitigated,false,txt_label)
+
+       
+
+
+
+// AddImbalance adds a newly discovered imbalance. this applies for both FVG and Volume Imbalance
+method AddImbalance(ImbalanceStructure IS, float o, float c, int o_time) =>
+    Imbalance imb = Imbalance.new()
+    imb.open_time           := o_time
+    imb.open                := o
+    imb.middle              := (o+c)/2
+    imb.close               := c
+
+    IS.imbalance.unshift(imb)
+    //IS.AddZone(imb)
+
+    if IS.imbalance.size() > 100 //IS.settings.max_count
+        temp = IS.imbalance.pop()
+        if not na(temp.box)
+            box.delete(temp.box)
+            line.delete(temp.line_middle)
+            label.delete(temp.lbl)
+    IS
+
+
+getRecentPHL_Mit(dwm_hl hl,Imbalance imb, bool h)=>
+    mitigated[] hit_line = h ? hl.hit_h_line : hl.hit_l_line
+    mitigated m = na
+    int size = array.size(hit_line)
+
+    if size > 0
+        int imb_year = year(imb.open_time, gmt_tz)
+        int imb_month = month(imb.open_time, gmt_tz)
+        int imb_day = dayofmonth(imb.open_time, gmt_tz)
+        
+        for i = size - 1 to 0
+            mitigated mit = array.get(hit_line, i)
+            if is_mitigated(mit) // Check if both timestamps fall on the same day
+                int mit_year = year(mit.timestamp, gmt_tz)
+                int mit_month = month(mit.timestamp, gmt_tz)
+                int mit_day = dayofmonth(mit.timestamp, gmt_tz)
+                
+                if mit_year == imb_year and mit_month == imb_month and mit_day == imb_day
+                    m := mit
+                    break
+    m
+
+createImbAlertText(Imbalance imb,string imbtf,bool bullish, bool ce) =>
+    y_alert_info = getRecentPHL_Mit(y_hl,imb,bullish ? false : true)
+    m_alert_info = na(y_alert_info) ? getRecentPHL_Mit(m_hl,imb,bullish ? false : true) : na
+    w_alert_info = na(m_alert_info) ? getRecentPHL_Mit(w_hl,imb,bullish ? false : true) : na
+    d_alert_info = na(w_alert_info) ? getRecentPHL_Mit(d_hl,imb,bullish ? false : true) : na
+    mitigated x = na
+    if not na(y_alert_info)
+        x := y_alert_info
+    else if not na(m_alert_info)
+        x := m_alert_info
+    else if not na(w_alert_info)
+        x := w_alert_info
+    else if not na(d_alert_info)
+        x := d_alert_info
+     
+    if na(x)
+        "Price hit "+imbtf+ (bullish?" bullish":" bearish")+" FVG"+(ce?" C.E":"")
+    else 
+        "Price hit "+imbtf+ (bullish?" bullish":" bearish")+" FVG"+(ce?" C.E":"")+" after sweeping P"+x.tf+ (bullish?" Low":" High")
+        
+  
+
+
+method AlertImbalance(ImbalanceStructure IS, Imbalance imb) =>
+    if IS.settings.alert
+        string imbtf = helper.Gethtftext(IS.settings.htf)
+        if imb.open <= imb.close //alert bullish imbalance
+            if low <= imb.close and imb.open < low and not imb.alerted
+                alert(createImbAlertText(imb,imbtf,true,false), alert.freq_once_per_bar)
+                imb.alerted := true
+            else if low <= imb.middle and imb.open < low and not imb.alerted_ce
+                alert(createImbAlertText(imb,imbtf,true,true), alert.freq_once_per_bar)
+                imb.alerted_ce := true
+        else //alert bearish imbalance
+            if high >= imb.close and imb.open > high and not imb.alerted
+                alert(createImbAlertText(imb,imbtf,false,false), alert.freq_once_per_bar)
+                imb.alerted := true
+            else if high >= imb.middle and imb.open > high and not imb.alerted_ce
+                alert(createImbAlertText(imb,imbtf,false,true), alert.freq_once_per_bar)
+                imb.alerted_ce := true
+
+// CheckMitigated checks if the imbalance has been mitigated based on the settings
+method CheckMitigated(ImbalanceStructure IS, o, h, l, c) =>
+    if IS.imbalance.size() > 0
+        int[] invalids = na
+     
+        int imbalances_size = array.size(IS.imbalance)
+        if imbalances_size > 0
+            for i = imbalances_size - 1 to 0
+                Imbalance imb = array.get(IS.imbalance, i)
+                bool is_mit = is_mitigated(imb.mit)
+
+            
+                if not is_mit
+                    float minus_percentage = 0.01 / 100 * imb.open
+                    float open_minus_percentage = imb.open - minus_percentage
+                    float open_plus_percentage = imb.open + minus_percentage
+                    float min_oc = math.min(o, c)
+                    float max_oc = math.max(o, c)
+                    
+                    switch settings.mitigated_type
+                        "None" =>
+                            is_mit := false
+                        "Wick filled" =>
+                            is_mit := imb.open <= imb.close ? l <= open_plus_percentage : h >= open_minus_percentage
+                        "Body filled" =>
+                            is_mit := imb.open < imb.close ? min_oc <= open_plus_percentage : max_oc >= open_minus_percentage
+                        "Wick filled half" =>
+                            is_mit := imb.open <= imb.close ? l <= imb.middle : h >= imb.middle
+                        "Body filled half" =>
+                            is_mit := imb.open <= imb.close ? min_oc <= imb.middle : max_oc >= imb.middle
+                    
+                    if is_mit and na(imb.mit)
+                        imb.mit := mitigated.new(is_mit, time)
+
+                    if is_mit
+                        if not IS.settings.mitigated_show and not IS.settings.show_inverse_imb
+                            if na(invalids)
+                                invalids := array.new_int()
+                            else
+                                array.unshift(invalids, i)
+                    else
+                        AlertImbalance(IS, imb)
+                    
+            
+            if not na(invalids)
+                if array.size(invalids) > 0
+                    for i = array.size(invalids) - 1 to 0
+                        int invalid_idx = array.get(invalids, i)
+                        Imbalance imb = array.get(IS.imbalance, invalid_idx)
+                        if not na(imb.box)
+                            box.delete(imb.box)
+                            line.delete(imb.line_middle)
+                            label.delete(imb.lbl)
+                        array.remove(IS.imbalance, invalid_idx)
+               
+    IS
+
+
+ 
+method CheckIFVG(ImbalanceStructure IS) =>
+    if timeframe.change(IS.settings.htf)
+        int size = IS.imbalance.size()
+        if size > 0 
+            for i = size - 1 to 0
+                imb = IS.imbalance.get(i)  
+                
+                if IS.settings.show_inverse_imb
+                    if not imb.ifvg and not imb.invalid_ifvg
+                        bullish_mid_range = imb.middle - imb.open
+                        bearish_mid_range = imb.open - imb.middle
+                        minus_percentage = 50
+                        half_bull_mid_range = bullish_mid_range - ((float(minus_percentage)/100)*bullish_mid_range)
+                        half_bear_mid_range = bearish_mid_range - ((float(minus_percentage)/100)*bearish_mid_range)
+                        // if greater than half of fvg mid range
+                        imb.ifvg := imb.open < imb.close ? close[1] < imb.open - half_bull_mid_range : close[1] > imb.open + half_bear_mid_range
+                    else if imb.ifvg and not imb.invalid_ifvg
+                        imb.invalid_ifvg := imb.open < imb.close ? high[1] > imb.close : low[1] < imb.close
+        
+   
+
+
+method AdjustMargins(ImbalanceStructure IS, int step) =>
+    int count = 0
+    if IS.imbalance.size() > 0
+        int buffer = time+((time-time[1])*(settings.padding+1+(settings.buffer*(step-1))))
+        
+        [rl, rh] = helper.ProximityRange(IS.settings.htf)
+
+        for i = 0 to IS.imbalance.size() - 1
+            imb = IS.imbalance.get(i)
+
+            if ((math.max(imb.open, imb.close) > rl) and (math.min(imb.open, imb.close) < rh)) and count < IS.settings.max_count
+                if IS.AddZone(imb, step)
+                    count := count+1
+            else
+                if not na(imb.box)
+                    box.delete(imb.box)
+                    label.delete(imb.lbl)
+                    line.delete((imb.line_middle))
+    IS
+// FindImbalance looks for imbalances and, if found, adds it to the list
+method FindImbalance(ImbalanceStructure IS, o, h, l, c, t, o1, h1, l1, c1, t1, o2, h2, l2, c2, t2) =>
+    if IS.settings.show and (h < l2 or l > h2)
+        float o_ = h < l2 ? l2 : h2
+        float c_ = h < l2 ? h : l 
+        if IS.imbalance.size() == 0 
+            IS.AddImbalance(o_, c_, t2)
+        else
+            if IS.imbalance.first().open_time < t2
+                IS.AddImbalance(o_, c_, t2)
+    IS
+
+method Process(ImbalanceStructure IS, float o, float h, float l, float c, int t, float o1, float h1, float l1, float c1, int t1, float o2, float h2, float l2, float c2, int t2) =>
+    var int visible = 0
+    if IS.settings.show
+        if not settings.ltf_hide or (settings.ltf_hide and helper.Validtimeframe(IS.settings.htf,settings.ctf_show))
+            if IS.settings.show
+                IS.FindImbalance(o, h, l, c, t, o1, h1, l1, c1, t1, o2, h2, l2, c2, t2)
+                visible := 1
+        
+        IS.CheckMitigated(o, h, l, c)
+        IS.CheckIFVG()
+        
+    visible
+//+------------------------------------------------------------------------------------------------------------+//
+//+--- Main call to start the process                                                                       ---+//
+//+------------------------------------------------------------------------------------------------------------+//
+
+daily                                   := request.security(syminfo.tickerid, "1D", ta.atr(14))
+monthly                                 := request.security(syminfo.tickerid, "1M", ta.atr(14))
+
+[o_1, h_1, l_1, c_1, t_1]               = request.security(syminfo.tickerid, htf_1, [open[1], high[1], low[1], close[1], time[1]])
+[o1_1, h1_1, l1_1, c1_1, t1_1]          = request.security(syminfo.tickerid, htf_1, [open[2], high[2], low[2], close[2], time[2]])
+[o2_1, h2_1, l2_1, c2_1, t2_1]          = request.security(syminfo.tickerid, htf_1, [open[3], high[3], low[3], close[3], time[3]])
+TF_1 := FVG_1.Process(o_1, h_1, l_1, c_1, t_1, o1_1, h1_1, l1_1, c1_1, t1_1, o2_1, h2_1, l2_1, c2_1, t2_1)
+FVG_1.AdjustMargins(TF_1)
+
+[o_2, h_2, l_2, c_2, t_2]               = request.security(syminfo.tickerid, htf_2, [open[1], high[1], low[1], close[1], time[1]])
+[o1_2, h1_2, l1_2, c1_2, t1_2]          = request.security(syminfo.tickerid, htf_2, [open[2], high[2], low[2], close[2], time[2]])
+[o2_2, h2_2, l2_2, c2_2, t2_2]          = request.security(syminfo.tickerid, htf_2, [open[3], high[3], low[3], close[3], time[3]])
+TF_2 := TF_1 + FVG_2.Process(o_2, h_2, l_2, c_2, t_2, o1_2, h1_2, l1_2, c1_2, t1_2, o2_2, h2_2, l2_2, c2_2, t2_2)
+FVG_2.AdjustMargins(TF_2)
+
+[o_3, h_3, l_3, c_3, t_3]               = request.security(syminfo.tickerid, htf_3, [open[1], high[1], low[1], close[1], time[1]])
+[o1_3, h1_3, l1_3, c1_3, t1_3]          = request.security(syminfo.tickerid, htf_3, [open[2], high[2], low[2], close[2], time[2]])
+[o2_3, h2_3, l2_3, c2_3, t2_3]          = request.security(syminfo.tickerid, htf_3, [open[3], high[3], low[3], close[3], time[3]])
+TF_3 := TF_2 + FVG_3.Process(o_3, h_3, l_3, c_3, t_3, o1_3, h1_3, l1_3, c1_3, t1_3, o2_3, h2_3, l2_3, c2_3, t2_3)
+FVG_3.AdjustMargins(TF_3)
+
+[o_4, h_4, l_4, c_4, t_4]               = request.security(syminfo.tickerid, htf_4, [open[1], high[1], low[1], close[1], time[1]])
+[o1_4, h1_4, l1_4, c1_4, t1_4]          = request.security(syminfo.tickerid, htf_4, [open[2], high[2], low[2], close[2], time[2]])
+[o2_4, h2_4, l2_4, c2_4, t2_4]          = request.security(syminfo.tickerid, htf_4, [open[3], high[3], low[3], close[3], time[3]])
+TF_4 := TF_3 + FVG_4.Process(o_4, h_4, l_4, c_4, t_4, o1_4, h1_4, l1_4, c1_4, t1_4, o2_4, h2_4, l2_4, c2_4, t2_4)
+FVG_4.AdjustMargins(TF_4)
+
+[o_5, h_5, l_5, c_5, t_5]               = request.security(syminfo.tickerid, htf_5, [open[1], high[1], low[1], close[1], time[1]])
+[o1_5, h1_5, l1_5, c1_5, t1_5]          = request.security(syminfo.tickerid, htf_5, [open[2], high[2], low[2], close[2], time[2]])
+[o2_5, h2_5, l2_5, c2_5, t2_5]          = request.security(syminfo.tickerid, htf_5, [open[3], high[3], low[3], close[3], time[3]])
+TF_5 := TF_4 + FVG_5.Process(o_5, h_5, l_5, c_5, t_5, o1_5, h1_5, l1_5, c1_5, t1_5, o2_5, h2_5, l2_5, c2_5, t2_5)
+FVG_5.AdjustMargins(TF_5)
+
+[o_6, h_6, l_6, c_6, t_6]               = request.security(syminfo.tickerid, htf_6, [open[1], high[1], low[1], close[1], time[1]])
+[o1_6, h1_6, l1_6, c1_6, t1_6]          = request.security(syminfo.tickerid, htf_6, [open[2], high[2], low[2], close[2], time[2]])
+[o2_6, h2_6, l2_6, c2_6, t2_6]          = request.security(syminfo.tickerid, htf_6, [open[3], high[3], low[3], close[3], time[3]])
+TF_6 := TF_5 + FVG_6.Process(o_6, h_6, l_6, c_6, t_6, o1_6, h1_6, l1_6, c1_6, t1_6, o2_6, h2_6, l2_6, c2_6, t2_6)
+FVG_6.AdjustMargins(TF_6)
+
+[o_7, h_7, l_7, c_7, t_7]               = request.security(syminfo.tickerid, htf_7, [open[1], high[1], low[1], close[1], time[1]])
+[o1_7, h1_7, l1_7, c1_7, t1_7]          = request.security(syminfo.tickerid, htf_7, [open[2], high[2], low[2], close[2], time[2]])
+[o2_7, h2_7, l2_7, c2_7, t2_7]          = request.security(syminfo.tickerid, htf_7, [open[3], high[3], low[3], close[3], time[3]])
+TF_7 := TF_6 + FVG_7.Process(o_7, h_7, l_7, c_7, t_7, o1_7, h1_7, l1_7, c1_7, t1_7, o2_7, h2_7, l2_7, c2_7, t2_7)
+FVG_7.AdjustMargins(TF_7)
+
+
+
+
+
+//----------------------------------------}
+//Order Blocks
+//----------------------------------------{
+string STYLE_TOOLTIP         = 'Orderblock color theme'
+string CONFLUENCE_FILTER     = 'Filter non significant internal structure breakouts'
+string INTERNAL_OB           = 'Display internal order blocks on the chart\n\nNumber of internal order blocks to display on the chart'
+string SWING_OB              = 'Display swing order blocks on the chart\n\nNumber of internal swing blocks to display on the chart'
+string FILTER_OB             = 'Method used to filter out volatile order blocks \n\nIt is recommended to use the cumulative mean range method when a low amount of data is available'
+
+
+
+
+
+
+show_iob = input(true, 'Internal Order Blocks'
+  , inline = 'iob'
+  , group = 'Order Blocks'
+  , tooltip = INTERNAL_OB)
+
+iob_showlast = input.int(5, ''
+  , minval = 1
+  , inline = 'iob'
+  , group = 'Order Blocks')
+ 
+
+
+show_ob = input(true, 'Swing Order Blocks  '
+  , inline = 'ob'
+  , group = 'Order Blocks'
+  , tooltip = SWING_OB)
+
+
+ob_showlast = input.int(5, ''
+  , minval = 1
+  , inline = 'ob'
+  , group = 'Order Blocks')
+
+ 
+
+
+
+ifilter_confluence = input(true, 'Confluence Filter'
+   , group = 'Order Blocks'
+  , tooltip = CONFLUENCE_FILTER)
+
+style = input.string('Colored'
+  , options = ['Colored', 'Monochrome']
+ , group = 'Order Blocks'
+  , tooltip = STYLE_TOOLTIP)
+
+ob_filter = input.string('Atr', 'Order Block Filter'
+  , options = ['Atr', 'Cumulative Mean Range']
+  , group = 'Order Blocks'
+  , tooltip = FILTER_OB)
+
+ibull_ob_css = input.color(color.new(#3179f5, 80), 'Internal Bullish OB'
+  , group = 'Order Blocks')
+
+ibear_ob_css = input.color(color.new(#f77c80, 80), 'Internal Bearish OB'
+  , group = 'Order Blocks')
+
+bull_ob_css = input.color(color.new(#1848cc, 80), 'Bullish OB'
+  , group = 'Order Blocks')
+
+bear_ob_css = input.color(color.new(#b22833, 80), 'Bearish OB'
+  , group = 'Order Blocks')
+
+n = bar_index
+atr = ta.atr(200)
+cmean_range = ta.cum(high - low) / n
+length = 50
+
+//Swings detection/measurements
+swings(len)=>
+    var os = 0
+    
+    upper = ta.highest(len)
+    lower = ta.lowest(len)
+
+    os := high[len] > upper ? 0 : low[len] < lower ? 1 : os[1]
+
+    top = os == 0 and os[1] != 0 ? high[len] : 0
+    btm = os == 1 and os[1] != 1 ? low[len] : 0
+
+    [top, btm]
+
+//Order block coordinates function
+ob_coord(use_max, loc, target_top, target_btm, target_left, target_type)=>
+    min = 99999999.
+    max = 0.
+    idx = 1
+
+    ob_threshold = ob_filter == 'Atr' ? atr : cmean_range 
+
+    //Search for highest/lowest high within the structure interval and get range
+    if use_max
+        for i = 1 to (n - loc)-1
+            if (high[i] - low[i]) < ob_threshold[i] * 2
+                max := math.max(high[i], max)
+                min := max == high[i] ? low[i] : min
+                idx := max == high[i] ? i : idx
+    else
+        for i = 1 to (n - loc)-1
+            if (high[i] - low[i]) < ob_threshold[i] * 2
+                min := math.min(low[i], min)
+                max := min == low[i] ? high[i] : max
+                idx := min == low[i] ? i : idx
+
+    array.unshift(target_top, max)
+    array.unshift(target_btm, min)
+    array.unshift(target_left, time[idx])
+    array.unshift(target_type, use_max ? -1 : 1)
+
+//Set order blocks
+display_ob(boxes, target_top, target_btm, target_left, target_type, show_last, swing, size)=>
+    for i = 0 to math.min(show_last-1, size-1)
+        get_box = array.get(boxes, i)
+
+        box.set_lefttop(get_box, array.get(target_left, i), array.get(target_top, i))
+        box.set_rightbottom(get_box, array.get(target_left, i), array.get(target_btm, i))
+        box.set_extend(get_box, extend.right)
+
+        color css = na
+        
+        if swing 
+            if style == 'Monochrome'
+                css := array.get(target_type, i) == 1 ? color.new(#b2b5be, 80) : color.new(#5d606b, 80)
+                border_css = array.get(target_type, i) == 1 ? #b2b5be : #5d606b
+                box.set_border_color(get_box, border_css)
+            else
+                css := array.get(target_type, i) == 1 ? bull_ob_css : bear_ob_css
+                box.set_border_color(get_box, css)
+
+            box.set_bgcolor(get_box, css)
+        else
+            if style == 'Monochrome'
+                css := array.get(target_type, i) == 1 ? color.new(#b2b5be, 80) : color.new(#5d606b, 80)
+            else
+                css := array.get(target_type, i) == 1 ? ibull_ob_css : ibear_ob_css
+            
+            box.set_border_color(get_box, css)
+            box.set_bgcolor(get_box, css)
+        
+//Global variables
+var top_y = 0., var top_x = 0
+var btm_y = 0., var btm_x = 0
+var itop_y = 0., var itop_x = 0
+var ibtm_y = 0., var ibtm_x = 0
+var top_cross = true,  var btm_cross = true
+var itop_cross = true, var ibtm_cross = true
+ 
+//Order Blocks Arrays
+var iob_top = array.new_float(0)
+var iob_btm = array.new_float(0)
+var iob_left = array.new_int(0)
+var iob_type = array.new_int(0)
+
+var ob_top = array.new_float(0)
+var ob_btm = array.new_float(0)
+var ob_left = array.new_int(0)
+var ob_type = array.new_int(0)
+
+//Filtering
+var bull_concordant = true
+var bear_concordant = true
+
+if ifilter_confluence
+    bull_concordant := high - math.max(close, open) > math.min(close, open - low)
+    bear_concordant := high - math.max(close, open) < math.min(close, open - low)
+ 
+  
+
+//Set order blocks
+var iob_boxes = array.new_box(0)
+var ob_boxes = array.new_box(0) 
+
+//Swings
+[top, btm] = swings(length)
+[itop, ibtm] = swings(5)
+
+
+if top
+    top_cross := true 
+    top_y := top
+    top_x := n - length
+ 
+
+if itop
+    itop_cross := true
+    itop_y := itop
+    itop_x := n - 5
+ 
+if btm
+    btm_cross := true
+    btm_y := btm
+    btm_x := n-length
+
+if ibtm
+    ibtm_cross := true
+    ibtm_y := ibtm
+    ibtm_x := n - 5
+
+
+//Detect internal bullish Order Block
+if show_iob and ta.crossover(close, itop_y) and itop_cross and top_y != itop_y and bull_concordant
+    ob_coord(false, itop_x, iob_top, iob_btm, iob_left, iob_type)
+    itop_cross := false
+
+//Detect bullish Order Block
+if show_ob and ta.crossover(close, top_y) and top_cross
+    ob_coord(false, top_x, ob_top, ob_btm, ob_left, ob_type)
+    top_cross := false
+
+
+//Detect internal bearish Order Block
+if show_iob and ta.crossunder(close, ibtm_y) and ibtm_cross and btm_y != ibtm_y and bear_concordant
+    ob_coord(true, ibtm_x, iob_top, iob_btm, iob_left, iob_type)
+    ibtm_cross := false 
+
+//Detect bearish bearish Order Block
+if show_ob and ta.crossunder(close, btm_y) and btm_cross
+    ob_coord(true, btm_x, ob_top, ob_btm, ob_left, ob_type)
+    btm_cross := false 
+
+
+
+//Delete internal order blocks box coordinates if top/bottom is broken
+for element in iob_type
+    index = array.indexof(iob_type, element)
+
+    if close < array.get(iob_btm, index) and element == 1
+        array.remove(iob_top, index) 
+        array.remove(iob_btm, index) 
+        array.remove(iob_left, index) 
+        array.remove(iob_type, index) 
+
+    else if close > array.get(iob_top, index) and element == -1
+        array.remove(iob_top, index) 
+        array.remove(iob_btm, index)
+        array.remove(iob_left, index) 
+        array.remove(iob_type, index) 
+
+//Delete internal order blocks box coordinates if top/bottom is broken
+for element in ob_type
+    index = array.indexof(ob_type, element)
+
+    if close < array.get(ob_btm, index) and element == 1
+        array.remove(ob_top, index) 
+        array.remove(ob_btm, index) 
+        array.remove(ob_left, index) 
+        array.remove(ob_type, index) 
+
+    else if close > array.get(ob_top, index) and element == -1
+        array.remove(ob_top, index) 
+        array.remove(ob_btm, index)
+        array.remove(ob_left, index) 
+        array.remove(ob_type, index) 
+
+iob_size = array.size(iob_type)
+ob_size = array.size(ob_type)
+
+if barstate.isfirst
+    if show_iob
+        for i = 0 to iob_showlast-1
+            array.push(iob_boxes, box.new(na,na,na,na, xloc = xloc.bar_time))
+    if show_ob
+        for i = 0 to ob_showlast-1
+            array.push(ob_boxes, box.new(na,na,na,na, xloc = xloc.bar_time))
+
+if iob_size > 0
+    if barstate.islast
+        display_ob(iob_boxes, iob_top, iob_btm, iob_left, iob_type, iob_showlast, false, iob_size)
+
+if ob_size > 0
+    if barstate.islast
+        display_ob(ob_boxes, ob_top, ob_btm, ob_left, ob_type, ob_showlast, true, ob_size)
+
+
+
+
+//----------------------------------------}
